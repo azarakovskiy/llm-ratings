@@ -1,7 +1,7 @@
 # 16 Interactive TUI: navigation, filters, effort override, detail view
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 12, 13, 14
 
 ## What to build
@@ -23,3 +23,7 @@ Navigation never traps the user: every mode has an exit key. Language choice is 
 - [ ] Enter opens the detail view with all fields; Esc returns to the table
 - [ ] Source-disagreement flag set when sources disagree, absent when they agree
 - [ ] q quits with clean exit
+
+## Answer
+
+Shipped `5163448` on `t16-interactive-tui` (worktree `llm-ratings-t16`, base `t12-14-merge`), 55/55 tests green, reviewed (standards + spec). Interactive TUI in new `llmratings/tui.py` — plain ANSI + termios/select, zero new deps: ←/→ and 1–5 category nav, ↑/↓ row nav, `f` cycles all → cap 5 → cap ≥4 (AA grade banding), `e` cycles low→medium→high→xhigh→max→default and resets on category switch, Enter opens the detail view (per-source raw grades + ranks, PPI division, list price, price tier, speed, frontier/dominated status incl. explicit "not ranked", TB grade or `—`, source-disagreement flag), Esc back, q quits; EOF and Ctrl-C also exit cleanly. Disagreement rule: per-source capability grades at this effort differ by ≥2 (the 09 prototype's rule). TUI entry requires stdin AND stdout ttys, plus `--interactive` to force it off a tty — redirected stdout stays batch (existing 37 tests untouched; piped-key sequences drive the TUI through the real CLI against fixtures). Attribution line in every frame. Batch output byte-identical for existing fixtures.
