@@ -1,11 +1,14 @@
-"""Category table rendering (tickets 11–12).
+"""Category table rendering (tickets 11–13).
 
 One category at its fixed effort, sorted by the category's league axis so the
 Δ columns read the ladder: ★ frontier section first, then ✗ dominated rows
 each annotated with its best replacement arrow. Frontier path line across
-efforts at the top. TB column renders — until ticket 13 wires the source.
+efforts at the top. DSW/AA/TB grade columns are per-source quintiles at that
+effort; the TB column grades TB's best-agent-collapsed ratings and shows `—`
+at efforts v2.1 doesn't cover (low/medium).
 """
 
+from .identity import best_tb
 from .rank import aa_points, dominator, frontier_set, pareto
 from .tier import grades
 
@@ -20,8 +23,8 @@ CATEGORIES = [
     ("Best Value", "high", "value"),
 ]
 
-_AXIS_LABEL = {"price": "cheapest first", "value": "PPI descending",
-               "capability": "capability descending"}
+_AXIS_LABEL = {"price": "cheapest first", "value": "best PPI first",
+               "capability": "best capability first"}
 
 HEADER = (f"{'DSW':>3} {'AA':>3} {'TB':>3}  {'Model':<17} {'Effort':<6} "
           f"{'Provider':<9} {'$/task':>7} {'ΔAA':>6} {'Δ$':>8} {'PPI':>5}  {'*':>1}")
@@ -64,7 +67,7 @@ def _cell(v, width):
 def _fmt_row(r):
     cost = fmt_money(r["cost"]) if r["cost"] is not None else "n/a"
     ppi = fmt_ppi(r["ppi"]) if r["ppi"] is not None else "n/a"
-    return (f"{_cell(r['dsw'], 3)} {_cell(r['aa'], 3)} {'—':>3}  "
+    return (f"{_cell(r['dsw'], 3)} {_cell(r['aa'], 3)} {_cell(r['tb'], 3)}  "
             f"{r['model']:<17} {r['effort']:<6} {r['provider']:<9} "
             f"{cost:>7} {r['d_aa']:>6} {r['d_cost']:>8} {ppi:>5}  {r['mark']}")
 
@@ -81,6 +84,14 @@ def _add_deltas(rows):
         else:
             r["d_aa"] = r["d_cost"] = "—"
         prev = r
+
+
+def _source_grades(ds, source, effort):
+    """{score: 1–5 grade} for one source's ratings at an effort — the grade
+    bins are per source, never blended (spec §5)."""
+    return grades([r.score for r in ds.ratings
+                   if r.source == source and r.effort == effort
+                   and r.score is not None])
 
 
 def _included(ds):
@@ -109,10 +120,12 @@ def category_rows(ds, cat):
     pts = _pts(ds)
     fr = frontier_set(pts)
     doms = {(m, e): dominator(pts, m, e, ii, c) for m, e, c, ii in pts}
-    dsw_g = grades([r.score for r in ds.ratings
-                    if r.source == "deepswe" and r.effort == effort and r.score is not None])
-    aa_g = grades([r.score for r in ds.ratings
-                   if r.source == "aa" and r.effort == effort and r.score is not None])
+    dsw_g = _source_grades(ds, "deepswe", effort)
+    aa_g = _source_grades(ds, "aa", effort)
+    # TB grades bin over the collapsed set — one rating per (model × effort)
+    # after best-agent collapse, so no agent inflates the bin.
+    tb_best = best_tb(ds.ratings, effort)
+    tb_g = grades([r.score for r in tb_best.values() if r.score is not None])
 
     rows = []
     for key in sorted(included & rated_at_effort):
@@ -121,12 +134,14 @@ def category_rows(ds, cat):
                     if r.source == "deepswe" and r.model_key == key and r.effort == effort), None)
         aa = next((r for r in ds.ratings
                    if r.source == "aa" and r.model_key == key and r.effort == effort), None)
+        tb = tb_best.get(key)
         ii = aa.score if aa else None
         cost = aa.cost if aa else None
         rows.append(dict(
             model=m.name, effort=effort, provider=m.provider,
             dsw=dsw_g.get(dsw.score) if dsw and dsw.score is not None else None,
             aa=aa_g.get(aa.score) if aa and aa.score is not None else None,
+            tb=tb_g.get(tb.score) if tb and tb.score is not None else None,
             cost=cost, ii=ii,
             ppi=(ii / cost) if (ii is not None and cost is not None) else None,
             frontier=(key, effort) in fr,

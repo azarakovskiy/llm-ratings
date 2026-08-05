@@ -1,17 +1,20 @@
 """Acquisition seam. Ticket 11: fixture backend only — saved source payloads
 served instead of HTTP. Ticket 15 replaces the body of fetch_all with live
-fetches; the contract below is the seam: fetch_all returns {source: raw
-payload dict}, and anything below that (identity join, tiering, ranking,
-rendering) never touches the network or the fixture files."""
+fetches; the contract below is the seam: fetch_all returns {source: raw payload
+dict}, and anything below that (identity join, tiering, ranking, rendering)
+never touches the network or the fixture files."""
 
 import json
 from pathlib import Path
 
 # Display names for error messages — "naming the source" per the failure contract.
-SOURCES = {"deepswe": "DeepSWE", "aa": "Artificial Analysis"}
+SOURCES = {"deepswe": "DeepSWE", "aa": "Artificial Analysis",
+           "tb": "Terminal-Bench"}
 
-# Fixture file per source; Terminal-Bench joins in ticket 13.
-FILES = {"deepswe": "deepswe.json", "aa": "aa.json"}
+# Fixture file per source. TB's live fetch is a listing plus one JSON per
+# submission; the fixture serves both in one file: {"listing": [...],
+# "submissions": {filename: row}}.
+FILES = {"deepswe": "deepswe.json", "aa": "aa.json", "tb": "tb.json"}
 
 
 class SourceError(Exception):

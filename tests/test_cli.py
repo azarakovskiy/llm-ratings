@@ -1,9 +1,13 @@
-"""CLI contract tests — tickets 11 and 12. Observable output only: exit
-codes and rendered lines, run through the real CLI in a subprocess against
-the checked-in fixtures (no network, no mocks)."""
+"""CLI contract tests — tickets 11–13. Observable output only: exit codes and
+rendered lines, run through the real CLI in a subprocess against the checked-in
+fixtures (no network, no mocks). Ticket 13's TB grades at high/max efforts are
+rendered in-process through the same fixture seam (the CLI's one rendered
+category is Chores/low, where TB is `—`); the collapse tie-break and the
+wholesale row count are asserted on the dataset the tables are built from."""
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -11,6 +15,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))  # in-process `import llmratings` for render tests
 FIXTURES = REPO / ".scratch" / "llm-ratings" / "fixtures" / "main"
 
 
@@ -50,6 +55,25 @@ class FixtureFailure(unittest.TestCase):
             r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"}, "--fixtures", td)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("Artificial Analysis", r.stderr)
+
+    def test_missing_tb_names_source(self):
+        # Only tb.json absent — the other two sources are intact, so the
+        # failure must name Terminal-Bench, not a generic error.
+        with tempfile.TemporaryDirectory() as td:
+            for f in ("deepswe.json", "aa.json"):
+                Path(td, f).write_text(Path(FIXTURES, f).read_text())
+            r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"}, "--fixtures", td)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Terminal-Bench", r.stderr)
+
+    def test_corrupt_tb_names_source(self):
+        with tempfile.TemporaryDirectory() as td:
+            for f in ("deepswe.json", "aa.json"):
+                Path(td, f).write_text(Path(FIXTURES, f).read_text())
+            Path(td, "tb.json").write_text("{")
+            r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"}, "--fixtures", td)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Terminal-Bench", r.stderr)
 
 
 class ChoresTable(unittest.TestCase):
@@ -286,6 +310,9 @@ class EdgeFixture(unittest.TestCase):
              "pass_at_1": 60},
         ]}
         Path(cls.td.name, "deepswe.json").write_text(json.dumps(ds))
+        # Empty TB set — this fixture is about the frontier, not the TB source.
+        Path(cls.td.name, "tb.json").write_text(
+            json.dumps({"listing": [], "submissions": {}}))
         cls.r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
                         "--fixtures", cls.td.name)
         assert cls.r.returncode == 0, cls.r.stderr
@@ -310,6 +337,116 @@ class EdgeFixture(unittest.TestCase):
                     if "GPT-5.6 Luna" in ln)
         self.assertEqual(self.lines[luna + 1].strip(),
                          "→ GPT-5.6 Sol low: +10 pts")
+
+
+class TerminalBench(unittest.TestCase):
+    """Ticket 13 — Terminal-Bench v2.1 as a third source. The CLI's rendered
+    category (Chores) is low effort, where TB is `—`; the high/max tables are
+    rendered in-process through the same fixture seam (fetch → identity →
+    tier → render), so the TB grade column is observable end to end."""
+
+    TB_MODELS = {"gpt-5-6-luna", "gpt-5-6-sol", "gpt-5-5", "claude-opus-5"}
+
+    @classmethod
+    def setUpClass(cls):
+        from llmratings import fetch, identity, render
+        raw = fetch.fetch_all(FIXTURES)
+        aliases = identity.load_aliases(REPO / "llmratings" / "aliases.json")
+        cls.ds = identity.build(aliases, raw)
+        cls.lines = {cat: [ln.rstrip() for ln in render.render(cls.ds, cat)]
+                     for cat in ("Deliberate", "Deep", "Everyday")}
+
+    def row(self, cat, prefix, model):
+        """First table row in cat whose line matches prefix + contains model —
+        a prefix match skips arrow lines ("    → …") that mention the model."""
+        return next(ln for ln in self.lines[cat]
+                    if re.match(prefix, ln) and model in ln)
+
+    def test_tb_dash_at_chores_low(self):
+        r = run_fixtures()
+        self.assertEqual(r.returncode, 0)
+        lines = [ln.rstrip() for ln in r.stdout.splitlines()]
+        for model in ("GPT-5.6 Luna", "GPT-5.6 Sol", "GPT-5.5",
+                      "Claude Opus 5"):
+            ln = next(ln for ln in lines
+                      if re.match(r"^\s*\d+\s+\d+\s+—\s+", ln)
+                      and model in ln)
+            self.assertRegex(ln, rf"^\s*\d+\s+\d+\s+—\s+{model}")
+
+    def test_tb_dash_at_everyday_medium(self):
+        # TB covers high/xhigh/max only — every medium row shows `—`.
+        # Data rows start with the right-aligned DSW cell (≤2 spaces, then a
+        # digit or —); titles/header/sections/arrows don't match.
+        rows = [ln for ln in self.lines["Everyday"]
+                if re.match(r"^ {0,2}(?:\d|—)", ln)]
+        self.assertTrue(rows)
+        for ln in rows:
+            self.assertRegex(ln, r"^\s*\S+\s+\S+\s+—\s")
+
+    def test_tb_grades_at_high(self):
+        # Deliberate = high. Collapsed TB scores: Sol .712, Luna .701,
+        # GPT-5.5 .671 → quintile grades 5/4/2 over TB's own set; Opus 5 has
+        # no TB high row → `—`.
+        for model, prefix in [
+            ("GPT-5.6 Sol", r"^\s*4\s+4\s+5\s+"),
+            ("GPT-5.6 Luna", r"^\s*1\s+2\s+4\s+"),
+            ("GPT-5.5", r"^\s*3\s+3\s+2\s+"),
+            ("Claude Opus 5", r"^\s*5\s+5\s+—\s+")]:
+            self.assertRegex(self.row("Deliberate", prefix, model),
+                             prefix + model)
+
+    def test_tb_grades_at_max(self):
+        # Deep = max. Collapsed TB scores: Sol .769, Luna .757, Opus 5 .689
+        # → grades 5/4/2; Kimi and Terra have no TB rows → `—`.
+        for model, prefix in [
+            ("GPT-5.6 Sol", r"^\s*4\s+4\s+5\s+"),
+            ("GPT-5.6 Luna", r"^\s*1\s+2\s+4\s+"),
+            ("Claude Opus 5", r"^\s*5\s+5\s+2\s+"),
+            ("Kimi K3", r"^\s*2\s+3\s+—\s+"),
+            ("gpt-5-6-terra", r"^\s*3\s+—\s+—\s+")]:
+            self.assertRegex(self.row("Deep", prefix, model), prefix + model)
+
+    def test_collapse_best_agent(self):
+        from llmratings import identity
+        # GPT-5.5 high has two agents: codex .664 and warp .671 — the better
+        # one wins, and the table shows a single GPT-5.5 row.
+        best = identity.best_tb(self.ds.ratings, "high")
+        self.assertEqual(best["gpt-5-5"].score, 0.671)
+        self.assertEqual(best["gpt-5-5"].agent, "warp")
+        rows = [ln for ln in self.lines["Deliberate"]
+                if "GPT-5.5" in ln and ln.startswith("  ")]
+        self.assertEqual(len(rows), 1)
+
+    def test_tie_broken_by_recency(self):
+        from llmratings import identity
+        # Luna max has two agents at .757 — the more recent submission
+        # (2026-07-11, codex) wins over 2026-07-01 (junie).
+        best = identity.best_tb(self.ds.ratings, "max")
+        self.assertEqual(best["gpt-5-6-luna"].score, 0.757)
+        self.assertEqual(best["gpt-5-6-luna"].date, "2026-07-11")
+        self.assertEqual(best["gpt-5-6-luna"].agent, "codex-cli")
+
+    def test_xhigh_rows_attach_and_collapse(self):
+        from llmratings import identity
+        # No category fixes xhigh effort yet (the `e` override is ticket 16),
+        # so the xhigh leg of the acceptance criteria is asserted at the
+        # dataset level: both xhigh rows attach and collapse to one rating per
+        # model — the same code path the high/max columns render.
+        xhigh = [r for r in self.ds.ratings
+                 if r.source == "tb" and r.effort == "xhigh"]
+        self.assertEqual(len(xhigh), 2)
+        best = identity.best_tb(self.ds.ratings, "xhigh")
+        self.assertEqual({k: r.score for k, r in best.items()},
+                         {"gpt-5-6-luna": 0.733, "gpt-5-6-sol": 0.745})
+
+    def test_rows_attach_wholesale_and_join_canonical(self):
+        # All 11 fixture submissions attach; each joins onto its canonical AA
+        # base slug — no TB source-only identity leaks into the tables.
+        tb = [r for r in self.ds.ratings if r.source == "tb"]
+        self.assertEqual(len(tb), 11)
+        for r in tb:
+            self.assertIn(r.model_key, self.TB_MODELS)
+        self.assertNotIn("tb:", {r.model_key for r in tb})
 
 
 if __name__ == "__main__":
