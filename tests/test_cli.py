@@ -1,6 +1,6 @@
-"""CLI contract tests — ticket 11 tracer bullet. Observable output only:
-exit codes and rendered lines, run through the real CLI in a subprocess
-against the checked-in fixtures (no network, no mocks)."""
+"""CLI contract tests — tickets 11 and 12. Observable output only: exit
+codes and rendered lines, run through the real CLI in a subprocess against
+the checked-in fixtures (no network, no mocks)."""
 
 import json
 import os
@@ -29,9 +29,9 @@ def run_fixtures(env_extra=None):
 
 class MissingKey(unittest.TestCase):
     def test_error_before_any_output(self):
-        env = dict(os.environ)
-        env.pop("LLM_RATINGS_AA_API_KEY", None)
-        r = run_cli(env, "--fixtures", str(FIXTURES))
+        # The CLI treats a falsy key as unset, so an empty string forces the
+        # missing-key path even when the parent env holds a real key.
+        r = run_cli({"LLM_RATINGS_AA_API_KEY": ""}, "--fixtures", str(FIXTURES))
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(r.stdout, "")
         self.assertIn("LLM_RATINGS_AA_API_KEY", r.stderr)
@@ -139,6 +139,118 @@ class ChoresTable(unittest.TestCase):
     def test_unpriced_row_has_no_arrow(self):
         _, arrow = self.row_after("gpt-5-6-terra")
         self.assertIsNone(arrow)
+
+
+class FiveCategories(unittest.TestCase):
+    """Ticket 12: --category selects any of the five; each renders at its
+    fixed effort, sorted by its league axis so the Δ columns read the ladder."""
+
+    EFFORT = {"Chores": "low", "Everyday": "medium", "Deliberate": "high",
+              "Deep": "max", "Best Value": "high"}
+    # Combined table order (★ frontier section first, then ✗ dominated),
+    # each section on its league axis: cheapest first / PPI desc /
+    # capability (AA) desc. Hand-computed from the checked-in fixtures.
+    ORDER = {
+        "Chores": ["GPT-5.6 Luna", "Kimi K3", "GPT-5.6 Sol", "GPT-5.5",
+                   "Claude Opus 5", "gpt-5-6-terra"],
+        "Everyday": ["GPT-5.6 Luna", "GPT-5.6 Sol", "Claude Opus 5",
+                     "GPT-5.5", "gpt-5-6-terra"],
+        "Deliberate": ["Claude Opus 5", "GPT-5.6 Sol", "GPT-5.6 Luna",
+                       "GPT-5.5", "gpt-5-6-terra"],
+        "Deep": ["Claude Opus 5", "GPT-5.6 Luna", "GPT-5.6 Sol", "Kimi K3",
+                 "gpt-5-6-terra"],
+        "Best Value": ["GPT-5.6 Luna", "GPT-5.6 Sol", "Claude Opus 5",
+                       "GPT-5.5", "gpt-5-6-terra"],
+    }
+
+    @classmethod
+    def category_lines(cls, name):
+        r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
+                    "--fixtures", str(FIXTURES), "--category", name)
+        assert r.returncode == 0, r.stderr
+        return [ln.rstrip() for ln in r.stdout.splitlines()]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lines = {name: cls.category_lines(name) for name in cls.EFFORT}
+
+    def row_after(self, name, needle):
+        idx = next(i for i, ln in enumerate(self.lines[name]) if needle in ln
+                   and ln.startswith("  "))
+        return self.lines[name][idx]
+
+    def test_each_category_renders_at_its_fixed_effort(self):
+        for name, effort in self.EFFORT.items():
+            first = next(ln for ln in self.lines[name]
+                         if ln.startswith(f"{name} — "))
+            self.assertTrue(first.startswith(f"{name} — {effort} effort —"),
+                            f"{name}: {first}")
+
+    def test_league_axis_order(self):
+        for name, models in self.ORDER.items():
+            lines = self.lines[name]
+            idx = [next(i for i, ln in enumerate(lines)
+                        if m in ln and ln.startswith("  "))
+                   for m in models]
+            self.assertEqual(idx, sorted(idx),
+                             f"{name} rows not on their league axis")
+
+    def test_deltas_read_the_ladder(self):
+        # Chores (cheapest first): Sol +2.8 pts from the frontier Luna,
+        # Opus +7.1 from GPT-5.5 — small near-tie deltas on the price ladder.
+        chores = self.lines["Chores"]
+        sol = self.row_after("Chores", "GPT-5.6 Sol")
+        self.assertIn("+2.8", sol)
+        self.assertIn("+$0.0021", sol)
+        opus = self.row_after("Chores", "Claude Opus 5")
+        self.assertIn("+7.1", opus)
+        self.assertIn("+$0.166", opus)
+        # Everyday (PPI desc): Sol +15.5 pts from Luna, Opus +2.7 from Sol —
+        # near-ties visible as small numbers, not swallowed.
+        ev = self.lines["Everyday"]
+        sol = self.row_after("Everyday", "GPT-5.6 Sol")
+        self.assertIn("+15.5", sol)
+        self.assertIn("+$0.379", sol)
+        opus = self.row_after("Everyday", "Claude Opus 5")
+        self.assertIn("+2.7", opus)
+        self.assertIn("+$0.332", opus)
+        # Deliberate (capability desc): Sol is 3.0 pts under Opus.
+        de = self.lines["Deliberate"]
+        sol = self.row_after("Deliberate", "GPT-5.6 Sol")
+        self.assertIn("-3.0", sol)
+        self.assertIn("-$0.677", sol)
+        # Deep dominated: Kimi 1.8 pts under Sol max — a near-tie.
+        deep = self.lines["Deep"]
+        kimi = self.row_after("Deep", "Kimi K3")
+        self.assertIn("-1.8", kimi)
+        # Best Value (PPI desc): Sol +9.8 pts from Luna, Opus +3.0 from Sol.
+        bv = self.lines["Best Value"]
+        sol = self.row_after("Best Value", "GPT-5.6 Sol")
+        self.assertIn("+9.8", sol)
+        self.assertIn("+$0.527", sol)
+        opus = self.row_after("Best Value", "Claude Opus 5")
+        self.assertIn("+3.0", opus)
+        self.assertIn("+$0.677", opus)
+
+    def test_dash_where_no_row_at_effort(self):
+        # Terra has no AA row at any effort: AA and TB cells are — at medium,
+        # no PPI. Kimi K3 has no medium row at all → absent from Everyday;
+        # GPT-5.5 has no max row → absent from Deep.
+        ev = self.lines["Everyday"]
+        terra = self.row_after("Everyday", "gpt-5-6-terra")
+        self.assertRegex(terra, r"\d\s+—\s+—\s+gpt-5-6-terra")
+        self.assertNotIn("Kimi", ev)
+        de = self.lines["Deliberate"]
+        self.assertNotIn("Kimi", de)
+        deep = self.lines["Deep"]
+        self.assertNotIn("GPT-5.5", deep)
+
+    def test_unknown_category_errors(self):
+        r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
+                    "--fixtures", str(FIXTURES), "--category", "bogus")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("invalid choice", r.stderr)
+        self.assertIn("Best Value", r.stderr)
 
 
 class EdgeFixture(unittest.TestCase):
