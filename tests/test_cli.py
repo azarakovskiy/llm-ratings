@@ -1,9 +1,13 @@
-"""CLI contract tests — tickets 11–14. Observable output only: exit codes and
-rendered lines, run through the real CLI in a subprocess against the checked-in
-fixtures (no network, no mocks). Ticket 13's TB grades at high/max efforts are
-rendered in-process through the same fixture seam (the CLI's one rendered
-category is Chores/low, where TB is `—`); the collapse tie-break and the
-wholesale row count are asserted on the dataset the tables are built from."""
+"""CLI contract tests — tickets 11–15. Observable output only: exit codes and
+rendered lines, run through the real CLI in a subprocess against the
+checked-in fixtures or a local stdlib HTTP origin (no external network, no
+mocks). Ticket 13's TB grades at high/max efforts are rendered in-process
+through the same fixture seam (the CLI's one rendered category is Chores/low,
+where TB is `—`); the collapse tie-break and the wholesale row count are
+asserted on the dataset the tables are built from. Ticket 15's live fetchers
+run against the local origin via the LLM_RATINGS_HTTP_BASE seam: live output
+must match fixture-mode output, and each source's failure path must name the
+source and exit nonzero with no output."""
 
 import json
 import os
@@ -11,8 +15,11 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))  # in-process `import llmratings` for render tests
@@ -40,6 +47,91 @@ def _row_after(lines, needle):
 def _cell_at(row, at, width):
     """Cell of a rendered row at column offset `at`, whitespace-stripped."""
     return row[at:at + width].strip()
+
+
+# AA row template shared by the hand-built fixtures (TierBinning, EdgeFixture,
+# LiveAcquisition): one low-effort config per model.
+AA_ROW = ('{{"id": "{i}", "name": "{name} (low)", "slug": "{slug}-low",'
+          ' "model_creator": {{"name": "Acme"}},'
+          ' "evaluations": {{"artificial_analysis_intelligence_index": {ii}}},'
+          ' "artificial_analysis_intelligence_index_cost":'
+          ' {{"cost_per_task": {{"total_cost": {cost}}}}},'
+          ' "performance": {{"median_output_tokens_per_second": {spd}}}}}')
+
+
+def _live_handler(srv):
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            srv.serve(self.path, self)
+
+        def log_message(self, *args):
+            pass
+    return H
+
+
+class _LiveServer:
+    """Local HTTP origin for the live-mode tests (no network leaves the
+    machine): serves the fixture payloads in the shapes the live fetchers
+    expect — deepswe.json verbatim; aa.json split into page_size=200 pages;
+    tb.json's listing with download_urls rewritten to this origin plus one
+    JSON per submission. `fail` is a path substring whose requests return
+    500 — the per-source failure contract."""
+
+    PAGE_SIZE = 200
+
+    def __init__(self, fixtures_dir=FIXTURES, fail=None):
+        self.dir = Path(fixtures_dir)
+        self.fail = fail
+        self.seen = []
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _live_handler(self))
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def url(self, path=""):
+        return f"http://127.0.0.1:{self.port}{path}"
+
+    def stop(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def serve(self, path, h):
+        self.seen.append(path)
+        if self.fail and self.fail in path:
+            h.send_response(500)
+            h.end_headers()
+            return
+        try:
+            body = self._body(path)
+        except KeyError:
+            h.send_response(404)
+            h.end_headers()
+            return
+        h.send_response(200)
+        h.send_header("Content-Type", "application/json")
+        h.send_header("Content-Length", str(len(body)))
+        h.end_headers()
+        h.wfile.write(body)
+
+    def _body(self, path):
+        if path.startswith("/artifacts/"):
+            return (self.dir / "deepswe.json").read_bytes()
+        if path.startswith("/api/v2/language/models/free"):
+            aa = json.loads((self.dir / "aa.json").read_text())
+            page = int(parse_qs(urlsplit(path).query).get("page", ["1"])[0])
+            batch = aa["data"][(page - 1) * self.PAGE_SIZE: page * self.PAGE_SIZE]
+            return json.dumps(dict(aa, data=batch)).encode()
+        if path.startswith("/repos/"):
+            tb = json.loads((self.dir / "tb.json").read_text())
+            listing = []
+            for e in tb["listing"]:
+                e = dict(e)
+                e["download_url"] = self.url("/sub/" + e["name"])
+                listing.append(e)
+            return json.dumps(listing).encode()
+        if path.startswith("/sub/"):
+            tb = json.loads((self.dir / "tb.json").read_text())
+            return json.dumps(tb["submissions"][path.rsplit("/", 1)[-1]]).encode()
+        raise KeyError(path)
 
 
 class MissingKey(unittest.TestCase):
@@ -324,12 +416,7 @@ class TierBinning(unittest.TestCase):
     fewer than five populated tiers, equal values never split across bins,
     tiers recompute from the data of the run, and no AA price -> no PPI."""
 
-    AA = ('{{"id": "{i}", "name": "{name} (low)", "slug": "{slug}-low",'
-          ' "model_creator": {{"name": "Acme"}},'
-          ' "evaluations": {{"artificial_analysis_intelligence_index": {ii}}},'
-          ' "artificial_analysis_intelligence_index_cost":'
-          ' {{"cost_per_task": {{"total_cost": {cost}}}}},'
-          ' "performance": {{"median_output_tokens_per_second": {spd}}}}}')
+    AA = AA_ROW
 
     MODELS = [("gpt-5-6-luna", "GPT-5.6 Luna"), ("gpt-5-6-sol", "GPT-5.6 Sol"),
               ("claude-opus-5", "Claude Opus 5"), ("gpt-5-5", "GPT-5.5")]
@@ -395,24 +482,20 @@ class EdgeFixture(unittest.TestCase):
     """Hand-built edge fixture (spec §Test strategy): equal-cost tie on the
     frontier and an AA-only model that must stay out of the envelope."""
 
-    AA_ROW = ('{{"id": "{i}", "name": "{name} (low)", "slug": "{slug}-low",'
-              ' "model_creator": {{"name": "Acme"}},'
-              ' "evaluations": {{"artificial_analysis_intelligence_index": {ii}}},'
-              ' "artificial_analysis_intelligence_index_cost":'
-              ' {{"cost_per_task": {{"total_cost": {cost}}}}},'
-              ' "performance": {{"median_output_tokens_per_second": 1000}}}}')
-
     @classmethod
     def setUpClass(cls):
         cls.td = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.td.cleanup)
         aa = {"data": [
-            json.loads(cls.AA_ROW.format(i="u1", name="GPT-5.6 Luna",
-                                         slug="gpt-5-6-luna", ii=50, cost=1.0)),
-            json.loads(cls.AA_ROW.format(i="u2", name="GPT-5.6 Sol",
-                                         slug="gpt-5-6-sol", ii=60, cost=1.0)),
-            json.loads(cls.AA_ROW.format(i="u3", name="Kimi K3",
-                                         slug="kimi-k3", ii=90, cost=0.5)),
+            json.loads(AA_ROW.format(i="u1", name="GPT-5.6 Luna",
+                                     slug="gpt-5-6-luna", ii=50, cost=1.0,
+                                     spd=1000)),
+            json.loads(AA_ROW.format(i="u2", name="GPT-5.6 Sol",
+                                     slug="gpt-5-6-sol", ii=60, cost=1.0,
+                                     spd=1000)),
+            json.loads(AA_ROW.format(i="u3", name="Kimi K3",
+                                     slug="kimi-k3", ii=90, cost=0.5,
+                                     spd=1000)),
         ], "intelligence_index_version": 4.1, "tier": "free",
             "pagination": {"page": 1, "page_size": 200, "total_pages": 1,
                            "has_more": False}}
@@ -561,6 +644,137 @@ class TerminalBench(unittest.TestCase):
         for r in tb:
             self.assertIn(r.model_key, self.TB_MODELS)
         self.assertNotIn("tb:", {r.model_key for r in tb})
+
+
+class LiveAcquisition(unittest.TestCase):
+    """Ticket 15 — live HTTP acquisition replaces the fixture backend. These
+    tests exercise the live fetch code paths with no network leaving the
+    machine: a local stdlib HTTP server serves the checked-in fixture payloads
+    in the shapes the live fetchers expect (the LLM_RATINGS_HTTP_BASE seam),
+    and can 500 any single path to exercise the per-source failure contract.
+    The alias-seed extension degrades an unknown model to source-only identity
+    through the fixture seam."""
+
+    KEY = {"LLM_RATINGS_AA_API_KEY": "dummy"}
+
+    def live_run(self, srv, *args):
+        env = dict(self.KEY)
+        env["LLM_RATINGS_HTTP_BASE"] = srv.url()
+        return run_cli(env, *args)
+
+    def test_live_missing_key_setup_error(self):
+        # No --fixtures: the default is now live. A missing key must hit the
+        # ticket-11 setup error before any fetch (even with a bogus origin).
+        r = run_cli({"LLM_RATINGS_AA_API_KEY": ""}, "--category", "Chores")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("LLM_RATINGS_AA_API_KEY", r.stderr)
+
+    def test_live_deepswe_failure_names_source(self):
+        srv = _LiveServer(fail="/artifacts/")
+        self.addCleanup(srv.stop)
+        r = self.live_run(srv)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "", "no partial tables on source failure")
+        self.assertIn("DeepSWE", r.stderr)
+
+    def test_live_aa_failure_names_source(self):
+        srv = _LiveServer(fail="/api/v2/language/models/free")
+        self.addCleanup(srv.stop)
+        r = self.live_run(srv)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("Artificial Analysis", r.stderr)
+
+    def test_live_tb_listing_failure_names_source(self):
+        srv = _LiveServer(fail="/repos/harbor-framework")
+        self.addCleanup(srv.stop)
+        r = self.live_run(srv)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("Terminal-Bench", r.stderr)
+
+    def test_live_tb_submission_failure_names_source(self):
+        # The listing serves fine; one per-entry raw JSON 500s — the whole
+        # TB source fails naming Terminal-Bench (no partial TB tables).
+        srv = _LiveServer(fail="/sub/")
+        self.addCleanup(srv.stop)
+        r = self.live_run(srv)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("Terminal-Bench", r.stderr)
+
+    def test_live_renders_same_tables_as_fixture_mode(self):
+        srv = _LiveServer()
+        self.addCleanup(srv.stop)
+        live = self.live_run(srv)
+        self.assertEqual(live.returncode, 0, live.stderr)
+        self.assertEqual(live.stdout, run_fixtures().stdout)
+
+    def test_live_aa_paginates_until_short_page(self):
+        # 250 AA rows served as 200 + 50. Kimi K3 (rated by DeepSWE) sits at
+        # index 200 — the start of page 2 — so a fetcher that stops after
+        # page 1 loses its AA row and the parity assertion below fails: the
+        # merge is observable from output alone. The request log then pins
+        # the rest of the contract (a second page was requested, no third).
+        dummy = [json.loads(AA_ROW.format(
+                     i=f"u{n}", name=f"Model {n}", slug=f"model-{n}",
+                     ii=10 + n, cost=0.01 * n, spd=100 + n))
+                 for n in range(1, 247)]
+        rows = [json.loads(AA_ROW.format(
+                    i="u1", name="GPT-5.6 Luna", slug="gpt-5-6-luna",
+                    ii=40, cost=0.1, spd=100)),
+                json.loads(AA_ROW.format(
+                    i="u2", name="GPT-5.6 Sol", slug="gpt-5-6-sol",
+                    ii=50, cost=0.2, spd=200)),
+                json.loads(AA_ROW.format(
+                    i="u3", name="GPT-5.5", slug="gpt-5-5",
+                    ii=60, cost=0.3, spd=300)),
+                json.loads(AA_ROW.format(
+                    i="u4", name="Claude Opus 5", slug="claude-opus-5",
+                    ii=70, cost=0.4, spd=400))] + dummy
+        rows[200] = json.loads(AA_ROW.format(
+                        i="u5", name="Kimi K3", slug="kimi-k3",
+                        ii=30, cost=0.05, spd=150))
+        with tempfile.TemporaryDirectory() as td:
+            Path(td, "aa.json").write_text(json.dumps({"data": rows}))
+            Path(td, "deepswe.json").write_text(json.dumps({"rows": [
+                {"model": s, "reasoning_effort": "low", "pass_at_1": p}
+                for s, p in [("gpt-5-6-luna", 0.4), ("gpt-5-6-sol", 0.5),
+                             ("gpt-5-5", 0.6), ("claude-opus-5", 0.7),
+                             ("kimi-k3", 0.35)]]}))
+            Path(td, "tb.json").write_text(
+                json.dumps({"listing": [], "submissions": {}}))
+            srv = _LiveServer(td)
+            self.addCleanup(srv.stop)
+            live = self.live_run(srv)
+            fix = run_cli(self.KEY, "--fixtures", td)
+        self.assertEqual(live.returncode, 0, live.stderr)
+        self.assertEqual(fix.returncode, 0, fix.stderr)
+        self.assertEqual(live.stdout, fix.stdout)
+        self.assertIn("GPT-5.6 Luna", live.stdout)
+        self.assertIn("Kimi K3", live.stdout)
+        self.assertTrue(any("page=2" in p for p in srv.seen),
+                        "AA fetcher must page past a full 200-row page")
+        self.assertFalse(any("page=3" in p for p in srv.seen),
+                         "AA fetcher must stop on the short page")
+
+    def test_unknown_model_degrades_to_source_only(self):
+        # A DeepSWE model with no alias entry joins to a source-only identity
+        # (source string as name, no AA grade/price/PPI/speed) and the run
+        # completes — the spec §3 degradation, never a blocker.
+        with tempfile.TemporaryDirectory() as td:
+            for f in ("aa.json", "tb.json"):
+                Path(td, f).write_text(Path(FIXTURES, f).read_text())
+            ds = json.loads(Path(FIXTURES, "deepswe.json").read_text())
+            ds["rows"].append({"model": "brand-new-model-9000",
+                               "reasoning_effort": "low", "pass_at_1": 0.5})
+            Path(td, "deepswe.json").write_text(json.dumps(ds))
+            r = run_cli(self.KEY, "--fixtures", td)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        row = next(ln for ln in r.stdout.splitlines()
+                   if "brand-new-model-9000" in ln and ln.startswith("  "))
+        self.assertRegex(row, r"n/a\s+—\s+—\s+n/a\s+—\s*$")
 
 
 if __name__ == "__main__":

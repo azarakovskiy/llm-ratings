@@ -1,5 +1,7 @@
 """CLI entry point. Ticket 12: --category picks one of five use-case
-categories, each rendered at its fixed reasoning effort."""
+categories, each rendered at its fixed reasoning effort. Ticket 15: the
+default run fetches all three sources live; --fixtures opts into the offline
+test seam."""
 
 import argparse
 import os
@@ -18,10 +20,10 @@ def main(argv=None):
                     default="Chores",
                     help="use-case category (default: %(default)s); each "
                          "renders at its fixed reasoning effort")
-    ap.add_argument("--fixtures", metavar="DIR",
-                    default=".scratch/llm-ratings/fixtures/main",
-                    help="serve saved source payloads from DIR instead of the "
-                         "network (the test seam; live fetches land in ticket 15)")
+    ap.add_argument("--fixtures", metavar="DIR", default=None,
+                    help="serve saved source payloads from DIR instead of "
+                         "the network (the offline test seam; the default is "
+                         "a live fetch on every run)")
     args = ap.parse_args(argv)
 
     if not os.environ.get("LLM_RATINGS_AA_API_KEY"):
