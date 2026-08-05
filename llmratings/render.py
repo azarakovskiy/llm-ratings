@@ -1,4 +1,4 @@
-"""Chores table rendering (ticket 11).
+"""Category table rendering (tickets 11–12).
 
 One category at its fixed effort, sorted by the category's league axis so the
 Δ columns read the ladder: ★ frontier section first, then ✗ dominated rows
@@ -10,8 +10,8 @@ from .rank import aa_points, dominator, frontier_set, pareto
 from .tier import grades
 
 # (name, fixed effort, league axis) — axes: "price" (cheapest best) |
-# "value"/"capability" (5 = best). All five are locked by 07; tickets 12/14
-# generalize the sort and add the tier columns.
+# "value"/"capability" (5 = best). Locked by 07; the sort per axis is
+# ticket 12, the tier columns are ticket 14.
 CATEGORIES = [
     ("Chores", "low", "price"),
     ("Everyday", "medium", "value"),
@@ -20,7 +20,8 @@ CATEGORIES = [
     ("Best Value", "high", "value"),
 ]
 
-_AXIS_LABEL = {"price": "cheapest first"}
+_AXIS_LABEL = {"price": "cheapest first", "value": "PPI descending",
+               "capability": "capability descending"}
 
 HEADER = (f"{'DSW':>3} {'AA':>3} {'TB':>3}  {'Model':<17} {'Effort':<6} "
           f"{'Provider':<9} {'$/task':>7} {'ΔAA':>6} {'Δ$':>8} {'PPI':>5}  {'*':>1}")
@@ -134,14 +135,27 @@ def category_rows(ds, cat):
     return rows
 
 
-def _league_key(r):
-    """Chores axis: per-task cost ascending; unpriced rows sort last."""
-    c = r["cost"]
-    return (c is None, c if c is not None else float("inf"))
+def _league_key(r, axis):
+    """Sort key for the category's league axis; missing values sort last.
+
+    price: per-task cost ascending (cheapest first); value: PPI descending;
+    capability: AA index descending — the grade order itself, since grades
+    are monotonic in the index (tier.grades bins distinct values).
+    """
+    if axis == "price":
+        c = r["cost"]
+        return (c is None, c if c is not None else float("inf"))
+    if axis == "value":
+        v = r["ppi"]
+    elif axis == "capability":
+        v = r["ii"]
+    else:
+        raise ValueError(f"unknown league axis: {axis!r}")
+    return (v is None, -v if v is not None else float("inf"))
 
 
 def render(ds, category_name="Chores"):
-    """Rendered table lines for one category (ticket 11: Chores)."""
+    """Rendered table lines for one category (ticket 12: --category picks)."""
     name, effort, axis = next(c for c in CATEGORIES if c[0] == category_name)
     pts = _pts(ds)
 
@@ -151,8 +165,12 @@ def render(ds, category_name="Chores"):
              "frontier: " + path, "", HEADER]
 
     rows = category_rows(ds, (name, effort, axis))
-    frows = sorted((r for r in rows if r["frontier"]), key=_league_key)
-    drows = sorted((r for r in rows if not r["frontier"]), key=_league_key)
+
+    def league(r):
+        return _league_key(r, axis)
+
+    frows = sorted((r for r in rows if r["frontier"]), key=league)
+    drows = sorted((r for r in rows if not r["frontier"]), key=league)
     _add_deltas(frows)
     _add_deltas(drows)
 

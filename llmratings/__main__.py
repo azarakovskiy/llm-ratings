@@ -1,4 +1,5 @@
-"""CLI entry point. Ticket 11: fixture mode renders the Chores table."""
+"""CLI entry point. Ticket 12: --category picks one of five use-case
+categories, each rendered at its fixed reasoning effort."""
 
 import argparse
 import os
@@ -13,6 +14,10 @@ def main(argv=None):
         prog="llm-ratings",
         description="Model-advice tables from DeepSWE, Terminal-Bench v2.1 and "
                     "Artificial Analysis (PoC).")
+    ap.add_argument("--category", choices=[c[0] for c in render.CATEGORIES],
+                    default="Chores",
+                    help="use-case category (default: %(default)s); each "
+                         "renders at its fixed reasoning effort")
     ap.add_argument("--fixtures", metavar="DIR",
                     default=".scratch/llm-ratings/fixtures/main",
                     help="serve saved source payloads from DIR instead of the "
@@ -34,7 +39,7 @@ def main(argv=None):
 
     print(render.ATTRIBUTION)
     print()
-    print("\n".join(render.render(ds)))
+    print("\n".join(render.render(ds, args.category)))
     return 0
 
 
