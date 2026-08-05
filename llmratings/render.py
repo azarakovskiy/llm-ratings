@@ -1,11 +1,13 @@
-"""Category table rendering (tickets 11–13).
+"""Category table rendering (tickets 11–14).
 
 One category at its fixed effort, sorted by the category's league axis so the
 Δ columns read the ladder: ★ frontier section first, then ✗ dominated rows
 each annotated with its best replacement arrow. Frontier path line across
 efforts at the top. DSW/AA/TB grade columns are per-source quintiles at that
 effort; the TB column grades TB's best-agent-collapsed ratings and shows `—`
-at efforts v2.1 doesn't cover (low/medium).
+at efforts v2.1 doesn't cover (low/medium). Ticket 14: the Spd column renders
+the speed tier; each row also carries the value tier (PPI grade) and price
+tier (cost grade) for the detail view.
 """
 
 from .identity import best_tb
@@ -27,7 +29,8 @@ _AXIS_LABEL = {"price": "cheapest first", "value": "best PPI first",
                "capability": "best capability first"}
 
 HEADER = (f"{'DSW':>3} {'AA':>3} {'TB':>3}  {'Model':<17} {'Effort':<6} "
-          f"{'Provider':<9} {'$/task':>7} {'ΔAA':>6} {'Δ$':>8} {'PPI':>5}  {'*':>1}")
+          f"{'Provider':<9} {'$/task':>7} {'ΔAA':>6} {'Δ$':>8} {'PPI':>5} "
+          f"{'Spd':>4}  {'*':>1}")
 
 ATTRIBUTION = ("Ratings and prices from Artificial Analysis — "
                "https://artificialanalysis.ai (attribution per their terms)")
@@ -69,7 +72,8 @@ def _fmt_row(r):
     ppi = fmt_ppi(r["ppi"]) if r["ppi"] is not None else "n/a"
     return (f"{_cell(r['dsw'], 3)} {_cell(r['aa'], 3)} {_cell(r['tb'], 3)}  "
             f"{r['model']:<17} {r['effort']:<6} {r['provider']:<9} "
-            f"{cost:>7} {r['d_aa']:>6} {r['d_cost']:>8} {ppi:>5}  {r['mark']}")
+            f"{cost:>7} {r['d_aa']:>6} {r['d_cost']:>8} {ppi:>5} "
+            f"{_cell(r['spd'], 4)}  {r['mark']}")
 
 
 def _add_deltas(rows):
@@ -137,16 +141,35 @@ def category_rows(ds, cat):
         tb = tb_best.get(key)
         ii = aa.score if aa else None
         cost = aa.cost if aa else None
+        speed = aa.speed if aa else None
         rows.append(dict(
             model=m.name, effort=effort, provider=m.provider,
             dsw=dsw_g.get(dsw.score) if dsw and dsw.score is not None else None,
             aa=aa_g.get(aa.score) if aa and aa.score is not None else None,
             tb=tb_g.get(tb.score) if tb and tb.score is not None else None,
-            cost=cost, ii=ii,
+            cost=cost, ii=ii, speed=speed,
             ppi=(ii / cost) if (ii is not None and cost is not None) else None,
             frontier=(key, effort) in fr,
             dom=doms.get((key, effort)),
         ))
+
+    # Ticket 14: the three independent 1–5 grades per model, each binned over
+    # its own axis's valid set within this category's table. Value = grade of
+    # the row's PPI — the PPI column's numerator is the AA Intelligence Index
+    # (ticket 11), so the set is single-source by construction and the value
+    # tier ranks intelligence-per-dollar on the same AA axis as the frontier.
+    # Speed = AA tokens/s grade (benchmark durations never enter); price =
+    # cost grade, 1 = cheapest. Equal values never split across bins; small
+    # sets yield fewer than five populated grades. Price tier feeds the
+    # detail view in a later ticket.
+    value_g = grades([r["ppi"] for r in rows if r["ppi"] is not None])
+    speed_g = grades([r["speed"] for r in rows if r["speed"] is not None])
+    price_g = grades([r["cost"] for r in rows if r["cost"] is not None],
+                     reverse=False)
+    for r in rows:
+        r["value"] = value_g.get(r["ppi"])
+        r["spd"] = speed_g.get(r["speed"])
+        r["price_tier"] = price_g.get(r["cost"])
     return rows
 
 

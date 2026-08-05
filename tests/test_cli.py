@@ -1,4 +1,4 @@
-"""CLI contract tests — tickets 11–13. Observable output only: exit codes and
+"""CLI contract tests — tickets 11–14. Observable output only: exit codes and
 rendered lines, run through the real CLI in a subprocess against the checked-in
 fixtures (no network, no mocks). Ticket 13's TB grades at high/max efforts are
 rendered in-process through the same fixture seam (the CLI's one rendered
@@ -30,6 +30,16 @@ def run_cli(env_extra, *args):
 def run_fixtures(env_extra=None):
     return run_cli(env_extra or {"LLM_RATINGS_AA_API_KEY": "dummy"},
                    "--fixtures", str(FIXTURES))
+
+
+def _row_after(lines, needle):
+    """First table row line containing needle (rows start with two spaces)."""
+    return next(ln for ln in lines if needle in ln and ln.startswith("  "))
+
+
+def _cell_at(row, at, width):
+    """Cell of a rendered row at column offset `at`, whitespace-stripped."""
+    return row[at:at + width].strip()
 
 
 class MissingKey(unittest.TestCase):
@@ -117,8 +127,9 @@ class ChoresTable(unittest.TestCase):
 
     def test_unpriced_row_last_without_ppi(self):
         terra, _ = self.row_after("gpt-5-6-terra")
-        # price n/a, PPI column n/a — no "k" magnitude anywhere in the row
-        self.assertRegex(terra, r"n/a\s+—\s+—\s+n/a\s*$")
+        # price n/a, Δ columns —, PPI column n/a, Spd —: no "k" magnitude
+        # anywhere in the row
+        self.assertRegex(terra, r"n/a\s+—\s+—\s+n/a\s+—\s*$")
         self.assertEqual(terra, self.lines[-1],
                          "unpriced row must sort last")
 
@@ -275,6 +286,109 @@ class FiveCategories(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("invalid choice", r.stderr)
         self.assertIn("Best Value", r.stderr)
+class TierColumns(unittest.TestCase):
+    """Ticket 14: the Spd column renders the speed tier (AA median output
+    tokens/s at the category's effort, 5 = fastest); a model with no AA row
+    shows a dash. Benchmark-run durations never enter this axis."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.r = run_fixtures()
+        assert cls.r.returncode == 0, cls.r.stderr
+        cls.lines = [ln.rstrip() for ln in cls.r.stdout.splitlines()]
+        header = next(ln for ln in cls.lines if ln.startswith("DSW"))
+        cls.spd_at = header.index("Spd")
+
+    def row_after(self, needle):
+        return _row_after(self.lines, needle)
+
+    def spd_of(self, row):
+        return _cell_at(row, self.spd_at, 4)
+
+    def test_spd_renders_speed_tier(self):
+        # Low-effort speeds: Luna 146.9, GPT-5.5 71.8, Sol 62.1, Opus 53.8,
+        # Kimi 35.0 -> five distinct values -> tiers 5,4,3,2,1 (5 = fastest).
+        for model, expected in [("GPT-5.6 Luna", "5"), ("GPT-5.5", "4"),
+                                ("GPT-5.6 Sol", "3"), ("Claude Opus 5", "2"),
+                                ("Kimi K3", "1")]:
+            self.assertEqual(self.spd_of(self.row_after(model)), expected, model)
+
+    def test_spd_dash_without_aa_row(self):
+        # Terra has no AA row at all -> no speed -> dash, like its other
+        # source-only columns. DeepSWE's duration/task never grades it.
+        self.assertEqual(self.spd_of(self.row_after("gpt-5-6-terra")), "—")
+
+
+class TierBinning(unittest.TestCase):
+    """Ticket 14 binning over small sets, observed through the Spd column:
+    fewer than five populated tiers, equal values never split across bins,
+    tiers recompute from the data of the run, and no AA price -> no PPI."""
+
+    AA = ('{{"id": "{i}", "name": "{name} (low)", "slug": "{slug}-low",'
+          ' "model_creator": {{"name": "Acme"}},'
+          ' "evaluations": {{"artificial_analysis_intelligence_index": {ii}}},'
+          ' "artificial_analysis_intelligence_index_cost":'
+          ' {{"cost_per_task": {{"total_cost": {cost}}}}},'
+          ' "performance": {{"median_output_tokens_per_second": {spd}}}}}')
+
+    MODELS = [("gpt-5-6-luna", "GPT-5.6 Luna"), ("gpt-5-6-sol", "GPT-5.6 Sol"),
+              ("claude-opus-5", "Claude Opus 5"), ("gpt-5-5", "GPT-5.5")]
+
+    def lines_for(self, speeds, costs=None):
+        """Run the CLI on a hand-built fixture: one low-effort config per
+        model, AA rows carrying the given speeds. Returns stdout lines."""
+        models = self.MODELS[:len(speeds)]
+        costs = costs or [0.1 + 0.1 * n for n in range(1, len(speeds) + 1)]
+        with tempfile.TemporaryDirectory() as td:
+            aa = {"data": [json.loads(self.AA.format(
+                i=f"u{n}", name=name, slug=slug,
+                ii=30 + n, cost=costs[n - 1], spd=s))
+                for n, ((slug, name), s) in enumerate(zip(models, speeds), 1)]}
+            Path(td, "aa.json").write_text(json.dumps(aa))
+            ds = {"rows": [{"model": slug, "reasoning_effort": "low",
+                            "pass_at_1": 0.1 * n}
+                           for n, (slug, _) in enumerate(models, 1)]}
+            Path(td, "deepswe.json").write_text(json.dumps(ds))
+            # Empty TB set — this fixture is about the tier bins, not the
+            # TB source; the merged CLI still requires the file (ticket 13).
+            Path(td, "tb.json").write_text(
+                json.dumps({"listing": [], "submissions": {}}))
+            r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"}, "--fixtures", td)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            lines = [ln.rstrip() for ln in r.stdout.splitlines()]
+            header = next(ln for ln in lines if ln.startswith("DSW"))
+            self.spd_at = header.index("Spd")
+            return lines
+
+    def spd_of(self, lines, model):
+        return _cell_at(_row_after(lines, model), self.spd_at, 4)
+
+    def test_equal_speeds_share_a_bin(self):
+        # Three models, two distinct speeds: the equal pair keeps one tier and
+        # only two of the five tiers are populated.
+        lines = self.lines_for([10, 10, 30])
+        self.assertEqual(self.spd_of(lines, "GPT-5.6 Luna"),
+                         self.spd_of(lines, "GPT-5.6 Sol"))
+        self.assertEqual({self.spd_of(lines, name) for _, name in self.MODELS[:3]},
+                         {"5", "3"})
+
+    def test_tiers_recompute_from_run_data(self):
+        # Same model set plus one more speed: Model 2's bin changes because
+        # the set changed — tiers come from the data of the run, not a table.
+        a = self.lines_for([10, 20, 30])
+        b = self.lines_for([10, 20, 30, 25])
+        self.assertEqual(self.spd_of(a, "GPT-5.6 Sol"), "4")
+        self.assertEqual(self.spd_of(b, "GPT-5.6 Sol"), "3")
+
+    def test_no_price_no_ppi_but_speed_renders(self):
+        # Luna has an AA row with no per-task cost: PPI n/a (no value tier),
+        # while the speed tier still grades from tokens/s.
+        lines = self.lines_for([100, 50], costs=["null", 0.5])
+        header = next(ln for ln in lines if ln.startswith("DSW"))
+        ppi_at = header.index("PPI")
+        luna = _row_after(lines, "GPT-5.6 Luna")
+        self.assertEqual(_cell_at(luna, ppi_at, 5), "n/a")
+        self.assertEqual(self.spd_of(lines, "GPT-5.6 Luna"), "5")
 
 
 class EdgeFixture(unittest.TestCase):
