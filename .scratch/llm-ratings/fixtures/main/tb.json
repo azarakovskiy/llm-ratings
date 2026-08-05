@@ -1,0 +1,468 @@
+{
+  "listing": [
+    {
+      "name": "20260711-openai-gpt-5-6-luna-max-codex-cli.json",
+      "path": "leaderboard/submissions/20260711-openai-gpt-5-6-luna-max-codex-cli.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1501,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260711-openai-gpt-5-6-luna-max-codex-cli.json"
+    },
+    {
+      "name": "20260701-openai-gpt-5-6-luna-max-junie-cli.json",
+      "path": "leaderboard/submissions/20260701-openai-gpt-5-6-luna-max-junie-cli.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1502,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260701-openai-gpt-5-6-luna-max-junie-cli.json"
+    },
+    {
+      "name": "20260705-openai-gpt-5-6-luna-xhigh-codex-cli.json",
+      "path": "leaderboard/submissions/20260705-openai-gpt-5-6-luna-xhigh-codex-cli.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1503,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260705-openai-gpt-5-6-luna-xhigh-codex-cli.json"
+    },
+    {
+      "name": "20260620-openai-gpt-5-6-luna-high-codex-cli.json",
+      "path": "leaderboard/submissions/20260620-openai-gpt-5-6-luna-high-codex-cli.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1504,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260620-openai-gpt-5-6-luna-high-codex-cli.json"
+    },
+    {
+      "name": "20260710-openai-gpt-5-6-sol-max-codex-cli.json",
+      "path": "leaderboard/submissions/20260710-openai-gpt-5-6-sol-max-codex-cli.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1505,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260710-openai-gpt-5-6-sol-max-codex-cli.json"
+    },
+    {
+      "name": "20260708-openai-gpt-5-6-sol-xhigh-codex-cli.json",
+      "path": "leaderboard/submissions/20260708-openai-gpt-5-6-sol-xhigh-codex-cli.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1506,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260708-openai-gpt-5-6-sol-xhigh-codex-cli.json"
+    },
+    {
+      "name": "20260625-openai-gpt-5-6-sol-high-codex-cli.json",
+      "path": "leaderboard/submissions/20260625-openai-gpt-5-6-sol-high-codex-cli.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1507,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260625-openai-gpt-5-6-sol-high-codex-cli.json"
+    },
+    {
+      "name": "20260702-openai-gpt-5-5-high-warp.json",
+      "path": "leaderboard/submissions/20260702-openai-gpt-5-5-high-warp.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1508,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260702-openai-gpt-5-5-high-warp.json"
+    },
+    {
+      "name": "20260615-openai-gpt-5-5-high-codex-cli.json",
+      "path": "leaderboard/submissions/20260615-openai-gpt-5-5-high-codex-cli.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1509,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260615-openai-gpt-5-5-high-codex-cli.json"
+    },
+    {
+      "name": "20260709-anthropic-claude-opus-5-max-claude-code.json",
+      "path": "leaderboard/submissions/20260709-anthropic-claude-opus-5-max-claude-code.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1510,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260709-anthropic-claude-opus-5-max-claude-code.json"
+    },
+    {
+      "name": "20260703-anthropic-claude-opus-5-max-terminus-2.json",
+      "path": "leaderboard/submissions/20260703-anthropic-claude-opus-5-max-terminus-2.json",
+      "sha": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "size": 1511,
+      "download_url": "https://raw.githubusercontent.com/harbor-framework/terminal-bench-2-1/main/leaderboard/submissions/20260703-anthropic-claude-opus-5-max-terminus-2.json"
+    }
+  ],
+  "submissions": {
+    "20260711-openai-gpt-5-6-luna-max-codex-cli.json": {
+      "source_filter": {
+        "agent": "codex-cli",
+        "agent_version": "0.1.0",
+        "model_name": "GPT-5.6 Luna",
+        "reasoning_effort": "max"
+      },
+      "metadata": {
+        "display_agent": "Codex CLI",
+        "display_model": "GPT-5.6 Luna",
+        "agent_org": "OpenAI",
+        "model_org": "OpenAI",
+        "date": "2026-07-11",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/101"
+      },
+      "metrics": {
+        "accuracy": 0.757,
+        "accuracy_stderr": 0.021,
+        "n_trials": 85,
+        "pass_at_2": 0.787,
+        "pass_at_5": 0.827,
+        "input_tokens_uncached": 121000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2050000,
+        "total_cost_usd": 4.2,
+        "avg_trial_duration_sec": 912.4,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-1-0",
+        "trial-1-1",
+        "trial-1-2"
+      ]
+    },
+    "20260701-openai-gpt-5-6-luna-max-junie-cli.json": {
+      "source_filter": {
+        "agent": "junie-cli",
+        "agent_version": "0.1.0",
+        "model_name": "GPT-5.6 Luna",
+        "reasoning_effort": "max"
+      },
+      "metadata": {
+        "display_agent": "Junie CLI",
+        "display_model": "GPT-5.6 Luna",
+        "agent_org": "JetBrains",
+        "model_org": "OpenAI",
+        "date": "2026-07-01",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/102"
+      },
+      "metrics": {
+        "accuracy": 0.757,
+        "accuracy_stderr": 0.024,
+        "n_trials": 86,
+        "pass_at_2": 0.787,
+        "pass_at_5": 0.827,
+        "input_tokens_uncached": 122000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2100000,
+        "total_cost_usd": 4.5,
+        "avg_trial_duration_sec": 1001.2,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-2-0",
+        "trial-2-1",
+        "trial-2-2"
+      ]
+    },
+    "20260705-openai-gpt-5-6-luna-xhigh-codex-cli.json": {
+      "source_filter": {
+        "agent": "codex-cli",
+        "agent_version": "0.1.0",
+        "model_name": "GPT-5.6 Luna",
+        "reasoning_effort": "xhigh"
+      },
+      "metadata": {
+        "display_agent": "Codex CLI",
+        "display_model": "GPT-5.6 Luna",
+        "agent_org": "OpenAI",
+        "model_org": "OpenAI",
+        "date": "2026-07-05",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/103"
+      },
+      "metrics": {
+        "accuracy": 0.733,
+        "accuracy_stderr": 0.021,
+        "n_trials": 87,
+        "pass_at_2": 0.763,
+        "pass_at_5": 0.803,
+        "input_tokens_uncached": 123000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2150000,
+        "total_cost_usd": 2.6,
+        "avg_trial_duration_sec": 780.5,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-3-0",
+        "trial-3-1",
+        "trial-3-2"
+      ]
+    },
+    "20260620-openai-gpt-5-6-luna-high-codex-cli.json": {
+      "source_filter": {
+        "agent": "codex-cli",
+        "agent_version": "0.1.0",
+        "model_name": "GPT-5.6 Luna",
+        "reasoning_effort": "high"
+      },
+      "metadata": {
+        "display_agent": "Codex CLI",
+        "display_model": "GPT-5.6 Luna",
+        "agent_org": "OpenAI",
+        "model_org": "OpenAI",
+        "date": "2026-06-20",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/104"
+      },
+      "metrics": {
+        "accuracy": 0.701,
+        "accuracy_stderr": 0.022,
+        "n_trials": 88,
+        "pass_at_2": 0.731,
+        "pass_at_5": 0.771,
+        "input_tokens_uncached": 124000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2200000,
+        "total_cost_usd": 1.3,
+        "avg_trial_duration_sec": 610.8,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-4-0",
+        "trial-4-1",
+        "trial-4-2"
+      ]
+    },
+    "20260710-openai-gpt-5-6-sol-max-codex-cli.json": {
+      "source_filter": {
+        "agent": "codex-cli",
+        "agent_version": "0.1.0",
+        "model_name": "GPT-5.6 Sol",
+        "reasoning_effort": "max"
+      },
+      "metadata": {
+        "display_agent": "Codex CLI",
+        "display_model": "GPT-5.6 Sol",
+        "agent_org": "OpenAI",
+        "model_org": "OpenAI",
+        "date": "2026-07-10",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/105"
+      },
+      "metrics": {
+        "accuracy": 0.769,
+        "accuracy_stderr": 0.02,
+        "n_trials": 89,
+        "pass_at_2": 0.799,
+        "pass_at_5": 0.839,
+        "input_tokens_uncached": 125000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2250000,
+        "total_cost_usd": 3.9,
+        "avg_trial_duration_sec": 890.1,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-5-0",
+        "trial-5-1",
+        "trial-5-2"
+      ]
+    },
+    "20260708-openai-gpt-5-6-sol-xhigh-codex-cli.json": {
+      "source_filter": {
+        "agent": "codex-cli",
+        "agent_version": "0.1.0",
+        "model_name": "GPT-5.6 Sol",
+        "reasoning_effort": "xhigh"
+      },
+      "metadata": {
+        "display_agent": "Codex CLI",
+        "display_model": "GPT-5.6 Sol",
+        "agent_org": "OpenAI",
+        "model_org": "OpenAI",
+        "date": "2026-07-08",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/106"
+      },
+      "metrics": {
+        "accuracy": 0.745,
+        "accuracy_stderr": 0.022,
+        "n_trials": 90,
+        "pass_at_2": 0.775,
+        "pass_at_5": 0.815,
+        "input_tokens_uncached": 126000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2300000,
+        "total_cost_usd": 2.2,
+        "avg_trial_duration_sec": 755.3,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-6-0",
+        "trial-6-1",
+        "trial-6-2"
+      ]
+    },
+    "20260625-openai-gpt-5-6-sol-high-codex-cli.json": {
+      "source_filter": {
+        "agent": "codex-cli",
+        "agent_version": "0.1.0",
+        "model_name": "GPT-5.6 Sol",
+        "reasoning_effort": "high"
+      },
+      "metadata": {
+        "display_agent": "Codex CLI",
+        "display_model": "GPT-5.6 Sol",
+        "agent_org": "OpenAI",
+        "model_org": "OpenAI",
+        "date": "2026-06-25",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/107"
+      },
+      "metrics": {
+        "accuracy": 0.712,
+        "accuracy_stderr": 0.023,
+        "n_trials": 91,
+        "pass_at_2": 0.742,
+        "pass_at_5": 0.782,
+        "input_tokens_uncached": 127000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2350000,
+        "total_cost_usd": 1.1,
+        "avg_trial_duration_sec": 590.2,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-7-0",
+        "trial-7-1",
+        "trial-7-2"
+      ]
+    },
+    "20260702-openai-gpt-5-5-high-warp.json": {
+      "source_filter": {
+        "agent": "warp",
+        "agent_version": "0.1.0",
+        "model_name": "GPT-5.5",
+        "reasoning_effort": "high"
+      },
+      "metadata": {
+        "display_agent": "Warp",
+        "display_model": "GPT-5.5",
+        "agent_org": "Warp",
+        "model_org": "OpenAI",
+        "date": "2026-07-02",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/108"
+      },
+      "metrics": {
+        "accuracy": 0.671,
+        "accuracy_stderr": 0.025,
+        "n_trials": 92,
+        "pass_at_2": 0.701,
+        "pass_at_5": 0.741,
+        "input_tokens_uncached": 128000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2400000,
+        "total_cost_usd": 0.85,
+        "avg_trial_duration_sec": 520.6,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-8-0",
+        "trial-8-1",
+        "trial-8-2"
+      ]
+    },
+    "20260615-openai-gpt-5-5-high-codex-cli.json": {
+      "source_filter": {
+        "agent": "codex-cli",
+        "agent_version": "0.1.0",
+        "model_name": "GPT-5.5",
+        "reasoning_effort": "high"
+      },
+      "metadata": {
+        "display_agent": "Codex CLI",
+        "display_model": "GPT-5.5",
+        "agent_org": "OpenAI",
+        "model_org": "OpenAI",
+        "date": "2026-06-15",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/109"
+      },
+      "metrics": {
+        "accuracy": 0.664,
+        "accuracy_stderr": 0.024,
+        "n_trials": 93,
+        "pass_at_2": 0.694,
+        "pass_at_5": 0.734,
+        "input_tokens_uncached": 129000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2450000,
+        "total_cost_usd": 0.9,
+        "avg_trial_duration_sec": 540.9,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-9-0",
+        "trial-9-1",
+        "trial-9-2"
+      ]
+    },
+    "20260709-anthropic-claude-opus-5-max-claude-code.json": {
+      "source_filter": {
+        "agent": "claude-code",
+        "agent_version": "0.1.0",
+        "model_name": "Claude Opus 5",
+        "reasoning_effort": "max"
+      },
+      "metadata": {
+        "display_agent": "Claude Code",
+        "display_model": "Claude Opus 5",
+        "agent_org": "Anthropic",
+        "model_org": "Anthropic",
+        "date": "2026-07-09",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/110"
+      },
+      "metrics": {
+        "accuracy": 0.689,
+        "accuracy_stderr": 0.019,
+        "n_trials": 94,
+        "pass_at_2": 0.719,
+        "pass_at_5": 0.759,
+        "input_tokens_uncached": 130000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2500000,
+        "total_cost_usd": 5.6,
+        "avg_trial_duration_sec": 1100.7,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-10-0",
+        "trial-10-1",
+        "trial-10-2"
+      ]
+    },
+    "20260703-anthropic-claude-opus-5-max-terminus-2.json": {
+      "source_filter": {
+        "agent": "terminus-2",
+        "agent_version": "0.1.0",
+        "model_name": "Claude Opus 5",
+        "reasoning_effort": "max"
+      },
+      "metadata": {
+        "display_agent": "Terminus 2",
+        "display_model": "Claude Opus 5",
+        "agent_org": "Mobius",
+        "model_org": "Anthropic",
+        "date": "2026-07-03",
+        "pr_url": "https://github.com/harbor-framework/terminal-bench-2-1/pull/111"
+      },
+      "metrics": {
+        "accuracy": 0.661,
+        "accuracy_stderr": 0.02,
+        "n_trials": 95,
+        "pass_at_2": 0.691,
+        "pass_at_5": 0.731,
+        "input_tokens_uncached": 131000000,
+        "input_tokens_cached": 0,
+        "output_tokens": 2550000,
+        "total_cost_usd": 5.1,
+        "avg_trial_duration_sec": 1050.4,
+        "reward_hacks": 0
+      },
+      "disqualified_trials": [],
+      "trials": [
+        "trial-11-0",
+        "trial-11-1",
+        "trial-11-2"
+      ]
+    }
+  }
+}

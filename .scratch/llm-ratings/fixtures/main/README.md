@@ -1,4 +1,4 @@
-# Fixtures — main (ticket 11)
+# Fixtures — main (tickets 11–13)
 
 Saved copies of the real source payloads, curated to a small subset, served
 by the CLI's `--fixtures` mode (the spec's user-confirmed test seam: no
@@ -12,8 +12,18 @@ Fetched live 2026-08-05:
   (no auth; `generated_at` 2026-08-04T01:34:32Z)
 - `aa.json` — `https://artificialanalysis.ai/api/v2/language/models/free?page_size=200&page=1..3`
   (free tier, `x-api-key`; `intelligence_index_version` 4.1)
+- `tb.json` — **synthesized** (ticket 13) in the shape of the real v2.1
+  payloads per the source survey (`assets/02-terminal-bench-source-survey.md`):
+  `{"listing": [...]}` mirrors the GitHub contents-API response for
+  `harbor-framework/terminal-bench-2-1/leaderboard/submissions`, and
+  `submissions` maps each filename to its submission JSON (`source_filter` /
+  `metadata` / `metrics` / `disqualified_trials` / `trials`). No live TB
+  payloads were saved; the entries are plausible v2.1-shaped rows for the
+  fixture models (efforts high/xhigh/max only, accuracy ± stderr, cost USD,
+  avg trial duration, tokens). Live shapes land in ticket 15.
 
-Rows are verbatim from the payloads; only the row selection is curated.
+Rows are verbatim from the payloads (TB: synthesized); only the row selection
+is curated.
 
 ## Model set (7)
 
@@ -52,3 +62,29 @@ Curation notes:
 - Frontier path line: 12 configs spanning low → max (Luna low … Opus 5 max).
 - DSW/AA grade columns, TB `—`, effort per row, open and closed weights,
   price n/a / no PPI on the source-only row.
+
+## TB set (ticket 13) — 11 submissions, 4 models
+
+| File (abridged) | Agent | Model | Effort | Acc ± CI | Date | Role |
+|---|---|---|---|---|---|---|
+| …-gpt-5-6-luna-max-codex-cli | codex-cli | GPT-5.6 Luna | max | .757 ± .021 | 07-11 | the recency tie-break winner |
+| …-gpt-5-6-luna-max-junie-cli | junie-cli | GPT-5.6 Luna | max | .757 ± .024 | 07-01 | same score, older — loses the tie |
+| …-gpt-5-6-luna-xhigh-codex-cli | codex-cli | GPT-5.6 Luna | xhigh | .733 ± .021 | 07-05 | xhigh coverage (no table renders xhigh yet) |
+| …-gpt-5-6-luna-high-codex-cli | codex-cli | GPT-5.6 Luna | high | .701 ± .022 | 06-20 | TB grade 4 at high |
+| …-gpt-5-6-sol-max-codex-cli | codex-cli | GPT-5.6 Sol | max | .769 ± .020 | 07-10 | best TB score at max → grade 5 |
+| …-gpt-5-6-sol-xhigh-codex-cli | codex-cli | GPT-5.6 Sol | xhigh | .745 ± .022 | 07-08 | xhigh coverage |
+| …-gpt-5-6-sol-high-codex-cli | codex-cli | GPT-5.6 Sol | high | .712 ± .023 | 06-25 | TB grade 5 at high |
+| …-gpt-5-5-high-warp | warp | GPT-5.5 | high | .671 ± .025 | 07-02 | best-agent collapse winner (.671 > .664) |
+| …-gpt-5-5-high-codex-cli | codex-cli | GPT-5.5 | high | .664 ± .024 | 06-15 | loses the collapse; no TB max row → `—` at Deep |
+| …-claude-opus-5-max-claude-code | claude-code | Claude Opus 5 | max | .689 ± .019 | 07-09 | TB grade 2 at max |
+| …-claude-opus-5-max-terminus-2 | terminus-2 | Claude Opus 5 | max | .661 ± .020 | 07-03 | loses the collapse |
+
+Notes:
+
+- Model strings (`model_name`) are the TB v2.1 display style ("GPT-5.6 Luna",
+  "GPT-5.5", "Claude Opus 5") and map to AA base slugs via the alias table;
+  every TB row joins onto a canonical model — none degrades to `tb:` identity.
+- No TB rows at low/medium (v2.1 doesn't offer them) — the `—` at
+  Chores/Everyday is the honest absence of data, not a dropped row.
+- Kimi K3, Terra and Qwen3.8 Max have no TB rows: Kimi/Terra show `—` in the
+  TB column at every effort; nothing-discarded is asserted on the 11 rows.

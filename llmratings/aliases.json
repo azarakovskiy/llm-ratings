@@ -4,5 +4,9 @@
   "gpt-5-6-terra": "gpt-5-6-terra",
   "gpt-5-5": "gpt-5-5",
   "claude-opus-5": "claude-opus-5",
-  "kimi-k3": "kimi-k3"
+  "kimi-k3": "kimi-k3",
+  "GPT-5.6 Luna": "gpt-5-6-luna",
+  "GPT-5.6 Sol": "gpt-5-6-sol",
+  "GPT-5.5": "gpt-5-5",
+  "Claude Opus 5": "claude-opus-5"
 }
