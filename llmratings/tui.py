@@ -1,34 +1,43 @@
-"""Interactive TUI (ticket 16) — plain ANSI, zero dependencies (spec §1
-allows it; the repo is stdlib-only). Spec §6 keymap: category nav ←/→ or
-1–5, ↑/↓ row nav, `f` capability filter (all → cap = 5 → cap ≥ 4, banding
-key = AA grade), `e` effort override (low → medium → high → xhigh → max →
-default, reset on category switch), Enter detail view, Esc back, q quit.
+"""Interactive TUI (tickets 16, 17) — a thin Textual shell over render.py.
 
-The session is a small state machine (`Session`: state + key → state) over a
-thin termios/select I/O shell, so the whole keymap is pipeable in tests:
-`--interactive` forces TUI mode off a tty, and EOF quits cleanly. Batch mode
-(non-tty stdin without the flag) is untouched in __main__.
+Ticket 16 shipped a hand-rolled ANSI TUI (termios/select, zero deps); on the
+user's terminal (cmux, full-width pane) its `"\x1b[2J\x1b[H" + "\n".join()`
+frames rendered as a staggered mess, while the identical bytes through a
+non-TTY pipe aligned perfectly — the emulator mangles `\n`-only frames with
+no cursor addressing. The fix is to stop hand-rolling, not to adjust columns
+(ADR 0001). Ticket 17 replaces the I/O shell with Textual: `render.py`
+stays the single source of table text (batch and TUI render identical
+lines), `Session` keeps the state machine, and the `LlmRatings` App just
+draws `Session.frame()` and routes keys into `Session.key()`.
+
+Keymap (spec §6): ←/→ or 1–5 category nav, ↑/↓ row nav, `f` capability
+filter (all → cap = 5 → cap ≥ 4, banding key = AA grade), `e` effort
+override (low → medium → high → xhigh → max → default, reset on category
+switch), Enter detail view, Esc back, q quit; Ctrl-C quits too. Textual owns
+cursor addressing, resize and scrolling; batch mode (non-tty stdin without
+the old `--interactive` flag) is untouched in __main__.
 """
 
+from __future__ import annotations
+
 import os
-import select
 import sys
-import time
 
 from . import render
 from .identity import EFFORTS
 
+try:
+    from rich.text import Text
+    from textual.app import App, ComposeResult
+    from textual.binding import Binding
+    from textual.containers import VerticalScroll
+    from textual.drivers.linux_driver import LinuxDriver
+    from textual.widgets import Static
+    _TEXTUAL = True
+except ImportError:   # batch mode must keep working without textual
+    _TEXTUAL = False
+
 FILTERS = [("all", None), ("cap = 5", 5), ("cap ≥ 4", 4)]
-
-_ARROWS = {b"\x1b[A": "up", b"\x1b[B": "down", b"\x1b[C": "right",
-           b"\x1b[D": "left", b"\x1bOA": "up", b"\x1bOB": "down",
-           b"\x1bOC": "right", b"\x1bOD": "left"}
-
-# Disambiguation window: arrow keys arrive as ESC + 2 continuation bytes;
-# a bare Esc with nothing after it inside the window stays an Esc. Pipe
-# tests write whole sequences atomically, so the window only ever sees a
-# sequence's own bytes — a bare Esc must be the last key written before EOF.
-ESC_WINDOW = 0.04
 
 TABLE_FOOTER = ("←/→ or 1–5 category · ↑/↓ move · f filter · e effort · "
                 "Enter detail · Esc/q quit")
@@ -38,7 +47,7 @@ class Session:
     """TUI state: category, cursor, filter, effort override, open detail row.
 
     `frame()` renders the current state; `key()` applies one key. The two
-    stay separate so the CLI loop is just draw → read → apply.
+    stay separate so the Textual shell is just draw → key → redraw.
     """
 
     def __init__(self, ds, category="Chores"):
@@ -131,63 +140,142 @@ class Session:
         self.detail_row = None
 
 
-def _esc_tail(stdin):
-    """Continuation bytes after ESC within the disambiguation window. Reads
-    one byte at a time so a key that follows an arrow key in the pipe is
-    never swallowed (a bare Esc stays alone)."""
-    fd = stdin.fileno()
-    tail = b""
-    end = time.monotonic() + ESC_WINDOW
-    while time.monotonic() < end and len(tail) < 2:
-        r, _, _ = select.select([stdin], [], [], 0.01)
-        if not r:
-            break
-        chunk = os.read(fd, 1)
-        if not chunk:
-            break
-        tail += chunk
-    return tail
+if _TEXTUAL:
+
+    class _EofDriver(LinuxDriver):
+        """LinuxDriver whose input thread quits the app when stdin hits
+        EOF. The stock driver's read loop spins forever on a closed stdin
+        (the EOF state stays readable, `os.read` keeps returning b''), which
+        would lose ticket 16's "EOF quits cleanly" contract — a closed
+        terminal must not leave a zombie process.
+
+        ponytail: mirror of LinuxDriver.run_input_thread with one change on
+        EOF; drop this subclass when upstream handles EOF itself.
+        """
+
+        def run_input_thread(self) -> None:
+            import selectors
+            from codecs import getincrementaldecoder
+
+            from textual._loop import loop_last
+            from textual._parser import ParseError
+            from textual._xterm_parser import XTermParser
+
+            selector = selectors.SelectSelector()
+            selector.register(self.fileno, selectors.EVENT_READ)
+            fileno = self.fileno
+            EVENT_READ = selectors.EVENT_READ
+            parser = XTermParser(self._debug)
+            feed = parser.feed
+            tick = parser.tick
+            utf8_decoder = getincrementaldecoder("utf-8")().decode
+            decode = utf8_decoder
+            read = os.read
+
+            def process_selector_events(selector_events, final=False):
+                for last, (_selector_key, mask) in loop_last(selector_events):
+                    if mask & EVENT_READ:
+                        unicode_data = decode(read(fileno, 1024 * 4),
+                                              final=final and last)
+                        if not unicode_data:
+                            # stdin hit EOF — quit instead of spinning.
+                            self.exit_event.set()
+                            self._app.call_from_thread(self._app.exit)
+                            return
+                        for event in feed(unicode_data):
+                            self.process_message(event)
+                for event in tick():
+                    self.process_message(event)
+
+            try:
+                while not self.exit_event.is_set():
+                    process_selector_events(selector.select(0.1))
+                selector.unregister(self.fileno)
+                process_selector_events(selector.select(0.1), final=True)
+            finally:
+                selector.close()
+                try:
+                    for event in feed(""):
+                        pass
+                except (EOFError, ParseError):
+                    pass
+
+    class LlmRatings(App):
+        """Textual shell over a Session: one full-frame Static; the
+        ticket-16 keymap as priority bindings (the scroll container would
+        otherwise consume ↑/↓/←/→ once the table outgrows the viewport, and
+        Textual 8 binds ctrl+c to copy on the Screen — the priority pass
+        beats both)."""
+
+        BINDINGS = [
+            Binding("left", "press('left')", show=False, priority=True),
+            Binding("right", "press('right')", show=False, priority=True),
+            Binding("up", "press('up')", show=False, priority=True),
+            Binding("down", "press('down')", show=False, priority=True),
+            Binding("f", "press('f')", show=False, priority=True),
+            Binding("e", "press('e')", show=False, priority=True),
+            Binding("enter", "press('enter')", show=False, priority=True),
+            Binding("escape", "press('esc')", show=False, priority=True),
+            Binding("q", "press('q')", show=False, priority=True),
+            Binding("ctrl+c", "press('q')", show=False, priority=True),
+            Binding("1", "press('1')", show=False, priority=True),
+            Binding("2", "press('2')", show=False, priority=True),
+            Binding("3", "press('3')", show=False, priority=True),
+            Binding("4", "press('4')", show=False, priority=True),
+            Binding("5", "press('5')", show=False, priority=True),
+        ]
+
+        def __init__(self, ds, category="Chores"):
+            super().__init__(driver_class=_EofDriver)
+            self.sess = Session(ds, category)
+
+        def compose(self) -> ComposeResult:
+            with VerticalScroll(id="view"):
+                yield Static("", id="table", markup=False)
+
+        def on_mount(self) -> None:
+            self._redraw()
+
+        def action_press(self, key: str) -> None:
+            """One keymap key → Session.key; quits on q (every key routes
+            through here, so this is the single exit point)."""
+            self.sess.key(key)
+            if self.sess.quit:
+                self.exit()
+            else:
+                self._redraw()
+
+        def _redraw(self) -> None:
+            """Draw the current frame; keep the selected row visible (the
+            cursor's reverse-video line is the frame's one ANSI span)."""
+            lines = self.sess.frame()
+            self.query_one("#table", Static).update(
+                Text.from_ansi("\n".join(lines)))
+            sel = next((i for i, ln in enumerate(lines) if "\x1b[7m" in ln),
+                       0)
+            view = self.query_one("#view", VerticalScroll)
+            if not view.size.height:   # not laid out yet — the initial view
+                return                 # starts at the top; no anchor to set
+            top, bottom = view.scroll_offset.y, view.scroll_offset.y + view.size.height
+            if not (top <= sel < bottom):
+                view.scroll_to(y=sel, animate=False)
 
 
-def read_key(stdin):
-    """One key from stdin: "up"/"down"/"left"/"right"/"esc"/"enter"/"eof",
-    a digit 1–5, or a letter (f, e, q — Ctrl-C maps to q)."""
-    fd = stdin.fileno()
-    b = os.read(fd, 1)
-    if not b:
-        return "eof"
-    if b == b"\x1b":
-        seq = b + _esc_tail(stdin)
-        return _ARROWS.get(seq, "esc")
-    if b in (b"\n", b"\r"):
-        return "enter"
-    if b == b"\x03":          # Ctrl-C — raw mode swallows SIGINT
-        return "q"
-    return b.decode("ascii", "replace").lower()
+def available() -> bool:
+    """True when the Textual dependency is importable. Batch mode runs
+    without it; the interactive path refuses to start with a clear setup
+    error (checked before the fetch, so a missing dep is reported
+    immediately rather than after a network round-trip)."""
+    return _TEXTUAL
 
 
-def _emit(lines):
-    sys.stdout.write("\x1b[2J\x1b[H" + "\n".join(lines) + "\n")
-    sys.stdout.flush()
-
-
-def run(ds, category="Chores"):
-    """Interactive session: draw → read → apply until q/Esc/EOF. Returns 0 —
-    every mode has an exit key, and EOF (a closed pipe) also quits cleanly."""
-    stdin = sys.stdin
-    fd = stdin.fileno()
-    saved = None
-    if stdin.isatty():
-        import termios
-        import tty
-        saved = termios.tcgetattr(fd)
-        tty.setraw(fd)
-    try:
-        sess = Session(ds, category)
-        while not sess.quit:
-            _emit(sess.frame())
-            sess.key(read_key(stdin))
-    finally:
-        if saved is not None:
-            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+def run(ds, category="Chores") -> int:
+    """Run the interactive session; returns 0 — every mode has an exit key,
+    and EOF/Ctrl-C quit cleanly. A missing textual dependency fails with a
+    clear setup error instead of a traceback."""
+    if not _TEXTUAL:
+        print("error: textual is not installed — run `make deps`",
+              file=sys.stderr)
+        return 1
+    LlmRatings(ds, category).run()
     return 0

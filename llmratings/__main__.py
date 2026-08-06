@@ -1,7 +1,9 @@
 """CLI entry point. Ticket 12: --category picks one of five use-case
 categories, each rendered at its fixed reasoning effort. Ticket 15: the
 default run fetches all three sources live; --fixtures opts into the offline
-test seam."""
+test seam. Ticket 17: the interactive TUI is a thin Textual shell
+(docs/adr/0001) gated on a real TTY — no --interactive flag, and a missing
+textual dependency errors out before the fetch."""
 
 import argparse
 import os
@@ -24,14 +26,21 @@ def main(argv=None):
                     help="serve saved source payloads from DIR instead of "
                          "the network (the offline test seam; the default is "
                          "a live fetch on every run)")
-    ap.add_argument("--interactive", action="store_true",
-                    help="force the interactive TUI even when stdin is not a "
-                         "terminal (tests pipe key sequences in)")
     args = ap.parse_args(argv)
 
     if not os.environ.get("LLM_RATINGS_AA_API_KEY"):
         print("error: LLM_RATINGS_AA_API_KEY is not set — get a free API key at "
               "artificialanalysis.ai and export it", file=sys.stderr)
+        return 1
+
+    # Interactive only on a real terminal: stdin AND stdout must be ttys
+    # (redirected stdout must stay batch, not ANSI frames). A missing
+    # textual dependency is reported before the fetch — no network
+    # round-trip for a setup error.
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if interactive and not tui.available():
+        print("error: textual is not installed — run `make deps`",
+              file=sys.stderr)
         return 1
 
     try:
@@ -42,10 +51,7 @@ def main(argv=None):
         print(f"error: {e}", file=sys.stderr)
         return 1
 
-    # Interactive only on a real terminal: stdin AND stdout must be ttys
-    # (redirected stdout must stay batch, not ANSI frames), or --interactive
-    # forces it (tests pipe key sequences in).
-    if args.interactive or (sys.stdin.isatty() and sys.stdout.isatty()):
+    if interactive:
         return tui.run(ds, args.category)
 
     print(render.ATTRIBUTION)
