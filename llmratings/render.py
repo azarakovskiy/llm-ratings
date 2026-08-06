@@ -25,7 +25,7 @@ CATEGORIES = [
     ("Best Value", "high", "value"),
 ]
 
-_AXIS_LABEL = {"price": "cheapest first", "value": "best PPI first",
+AXIS_LABEL = {"price": "cheapest first", "value": "best PPI first",
                "capability": "best capability first"}
 
 HEADER = (f"{'DSW':>3} {'AA':>3} {'TB':>3}  {'Model':<17} {'Effort':<6} "
@@ -143,7 +143,7 @@ def category_rows(ds, cat):
         cost = aa.cost if aa else None
         speed = aa.speed if aa else None
         rows.append(dict(
-            model=m.name, effort=effort, provider=m.provider,
+            key=key, model=m.name, effort=effort, provider=m.provider,
             dsw=dsw_g.get(dsw.score) if dsw and dsw.score is not None else None,
             aa=aa_g.get(aa.score) if aa and aa.score is not None else None,
             tb=tb_g.get(tb.score) if tb and tb.score is not None else None,
@@ -192,17 +192,25 @@ def _league_key(r, axis):
     return (v is None, -v if v is not None else float("inf"))
 
 
-def render(ds, category_name="Chores"):
-    """Rendered table lines for one category (ticket 12: --category picks)."""
-    name, effort, axis = next(c for c in CATEGORIES if c[0] == category_name)
+def table(ds, category_name="Chores", effort=None, min_aa=None):
+    """(rendered lines, display-ordered row dicts) for one category at one
+    effort (ticket 16 extends ticket 12's render): `effort` overrides the
+    category's fixed effort (the `e` key); `min_aa` cuts the table to the
+    top capability bands by AA grade (the `f` key: 5 = top band, 4 = top
+    two). The frontier path line is the cross-effort ladder and stays whole
+    under both."""
+    name, fixed, axis = next(c for c in CATEGORIES if c[0] == category_name)
+    effort = effort or fixed
     pts = _pts(ds)
 
     path = " → ".join(f"{ds.models[m].name} {e} {ii:.0f} @ {fmt_money(c)}"
                       for m, e, c, ii in pareto(pts))
-    lines = [f"{name} — {effort} effort — {_AXIS_LABEL[axis]}", "",
+    lines = [f"{name} — {effort} effort — {AXIS_LABEL[axis]}", "",
              "frontier: " + path, "", HEADER]
 
     rows = category_rows(ds, (name, effort, axis))
+    if min_aa is not None:
+        rows = [r for r in rows if r["aa"] is not None and r["aa"] >= min_aa]
 
     def league(r):
         return _league_key(r, axis)
@@ -212,14 +220,116 @@ def render(ds, category_name="Chores"):
     _add_deltas(frows)
     _add_deltas(drows)
 
-    lines.append("★ frontier — nothing beats these on rating AND price")
-    for r in frows:
-        r["mark"] = "*"
-        lines.append(_fmt_row(r))
-    lines.append("✗ dominated — take the arrow instead")
-    for r in drows:
-        r["mark"] = ""
-        lines.append(_fmt_row(r))
-        if r["dom"]:
-            lines.append("    " + arrow_text(r["dom"], ds))
+    if frows:
+        lines.append("★ frontier — nothing beats these on rating AND price")
+        for r in frows:
+            r["mark"] = "*"
+            lines.append(_fmt_row(r))
+    if drows:
+        lines.append("✗ dominated — take the arrow instead")
+        for r in drows:
+            r["mark"] = ""
+            lines.append(_fmt_row(r))
+            if r["dom"]:
+                lines.append("    " + arrow_text(r["dom"], ds))
+    return lines, frows + drows
+
+
+def render(ds, category_name="Chores", effort=None, min_aa=None):
+    """Rendered table lines for one category — batch-mode entry (ticket 12:
+    --category picks; ticket 16 adds the effort override and AA-band filter
+    that the TUI's `table` call shares)."""
+    lines, _ = table(ds, category_name, effort, min_aa)
     return lines
+
+
+def detail(ds, row, category_name):
+    """Detail-view lines for one table row (ticket 16, spec §6): per-source
+    raw grades and ranks, the PPI division (rating ÷ cost), list price,
+    price tier, speed, frontier/dominated status, and the source-disagreement
+    flag. The flag is set when the capability grades of the sources that
+    rate this model at this effort disagree by ≥2 — the 09 prototype's rule:
+    a grade gap that wide means the sources tell different stories, and
+    disagreement is meaning, not noise to average away."""
+    name, fixed, axis = next(c for c in CATEGORIES if c[0] == category_name)
+    key, effort = row["key"], row["effort"]
+    m = ds.models[key]
+    out = [f"{m.name} {effort} — {m.provider}",
+           f"{name} · effort {effort} · league: {AXIS_LABEL[axis]}", ""]
+
+    tb_best = best_tb(ds.ratings, effort)
+
+    def rating(source):
+        if source == "tb":
+            return tb_best.get(key)
+        return next((r for r in ds.ratings
+                     if r.source == source and r.model_key == key
+                     and r.effort == effort), None)
+
+    def rank(source, score):
+        """(rank, n) of `score` within its source's set at this effort —
+        TB ranks over the collapsed set, the set its grade bins over."""
+        if source == "tb":
+            scores = [r.score for r in tb_best.values() if r.score is not None]
+        else:
+            scores = [r.score for r in ds.ratings
+                      if r.source == source and r.effort == effort
+                      and r.score is not None]
+        n = len(scores)
+        return (1 + sum(1 for s in scores if s > score), n)
+
+    graded = []
+    for row_key, label, source in (("dsw", "DeepSWE", "deepswe"),
+                                   ("aa", "AA", "aa"),
+                                   ("tb", "TB", "tb")):
+        r = rating(source)
+        grade = row[row_key]
+        if r is None or r.score is None or grade is None:
+            out.append(f"{label:<8} grade —   no {label} row at {effort} effort")
+            continue
+        raw = f"{r.score:.3f}" if r.score < 1 else f"{r.score:.1f}"
+        rk = rank(source, r.score)
+        out.append(f"{label:<8} grade {grade}   raw {raw:<8} "
+                   f"rank {rk[0]} of {rk[1]} rated at this effort")
+        graded.append((label, grade))
+
+    if row["ppi"] is not None:
+        out.append(f"PPI      {fmt_ppi(row['ppi'])} = {row['ii']:.1f} / "
+                   f"{fmt_money(row['cost'])}   value grade {row['value']}")
+    else:
+        out.append("PPI      n/a — no AA price at this effort")
+
+    aa = rating("aa")
+    tier = row["price_tier"]
+    tier_txt = "—" if tier is None else tier
+    if aa is not None:
+        pr = aa.raw.get("pricing") or {}
+        inp, outp = pr.get("price_1m_input_tokens"), pr.get("price_1m_output_tokens")
+        if inp is not None and outp is not None:
+            out.append(f"list price  ${inp:.2f}/${outp:.2f} per M in/out "
+                       f"({effort} variant)   price tier {tier_txt}")
+        else:
+            out.append(f"list price  n/a   price tier {tier_txt}")
+    else:
+        out.append("list price  n/a   price tier —")
+
+    if row["speed"] is not None:
+        out.append(f"speed     {row['speed']:.1f} t/s   speed tier {row['spd']}")
+    else:
+        out.append("speed     —   no AA speed at this effort")
+
+    if row["frontier"]:
+        out.append("frontier * — no other configuration beats this on rating AND price")
+    elif row["dom"]:
+        out.append("dominated — " + arrow_text(row["dom"], ds))
+    else:
+        out.append("not ranked — no AA price, so no frontier/dominated position")
+
+    if len(graded) >= 2:
+        lo = min(graded, key=lambda t: t[1])
+        hi = max(graded, key=lambda t: t[1])
+        if hi[1] - lo[1] >= 2:
+            out.append(f"sources disagree ({lo[0]} {lo[1]} vs {hi[0]} {hi[1]} "
+                       f"at {effort}): that's meaning, not noise — the "
+                       "sources measure different things")
+    return out

@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import fetch, identity, render
+from . import fetch, identity, render, tui
 
 
 def main(argv=None):
@@ -24,6 +24,9 @@ def main(argv=None):
                     help="serve saved source payloads from DIR instead of "
                          "the network (the offline test seam; the default is "
                          "a live fetch on every run)")
+    ap.add_argument("--interactive", action="store_true",
+                    help="force the interactive TUI even when stdin is not a "
+                         "terminal (tests pipe key sequences in)")
     args = ap.parse_args(argv)
 
     if not os.environ.get("LLM_RATINGS_AA_API_KEY"):
@@ -38,6 +41,12 @@ def main(argv=None):
     except fetch.SourceError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+
+    # Interactive only on a real terminal: stdin AND stdout must be ttys
+    # (redirected stdout must stay batch, not ANSI frames), or --interactive
+    # forces it (tests pipe key sequences in).
+    if args.interactive or (sys.stdin.isatty() and sys.stdout.isatty()):
+        return tui.run(ds, args.category)
 
     print(render.ATTRIBUTION)
     print()
