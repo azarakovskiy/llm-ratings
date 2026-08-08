@@ -1,4 +1,4 @@
-# Fixtures — main (tickets 11–13)
+# Fixtures — main (tickets 11–18)
 
 Saved copies of the real source payloads, curated to a small subset, served
 by the CLI's `--fixtures` mode (the spec's user-confirmed test seam: no
@@ -18,9 +18,17 @@ Fetched live 2026-08-05:
   `harbor-framework/terminal-bench-2-1/leaderboard/submissions`, and
   `submissions` maps each filename to its submission JSON (`source_filter` /
   `metadata` / `metrics` / `disqualified_trials` / `trials`). No live TB
-  payloads were saved; the entries are plausible v2.1-shaped rows for the
+  payloads are saved; the entries are plausible v2.1-shaped rows for the
   fixture models (efforts high/xhigh/max only, accuracy ± stderr, cost USD,
   avg trial duration, tokens). Live shapes land in ticket 15.
+- `or.json` — **synthesized** (ticket 18) in the shape of the real OpenRouter
+  `GET /api/v1/models` response per the source survey
+  (`assets/05-openrouter-source-survey.md`): `{"data": [...]}` rows with a
+  vendor-prefixed `id`, `context_length`, and `architecture.modalities`
+  (input/output modality lists). Real OR data (400 rows) was fetched live
+  2026-08-08 to validate the shape, but the fixture models are fictional, so
+  the rows are hand-written in the real shape like `tb.json`. Kimi K3 is
+  deliberately omitted — the "no OpenRouter row" detail case.
 
 Rows are verbatim from the payloads (TB: synthesized); only the row selection
 is curated.

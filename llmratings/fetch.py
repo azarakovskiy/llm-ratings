@@ -6,9 +6,12 @@ Ticket 11: fixture backend — saved source payloads served instead of HTTP.
 Ticket 15: fetch_all(None) replaces that with live HTTP for all three sources
 (DeepSWE static JSON; Artificial Analysis paginated API with x-api-key;
 Terminal-Bench GitHub contents listing plus one raw JSON per submission).
-Fixture mode is unchanged and stays the offline test seam; live mode is
-exercised offline against a local origin via the LLM_RATINGS_HTTP_BASE
-override (test seam only — it swaps the origin of every live URL).
+Ticket 18: OpenRouter `GET /api/v1/models` joins as best-effort enrichment
+(context_length/modalities for the detail view) — a failure yields "or": None
+and the run proceeds. Fixture mode is unchanged and stays the offline test
+seam; live mode is exercised offline against a local origin via the
+LLM_RATINGS_HTTP_BASE override (test seam only — it swaps the origin of every
+live URL).
 """
 
 import json
@@ -31,6 +34,7 @@ FILES = {"deepswe": "deepswe.json", "aa": "aa.json", "tb": "tb.json"}
 _DEEPSWE = "/artifacts/v1.1/leaderboard-live.json"
 _AA = "/api/v2/language/models/free"
 _TB_LISTING = "/repos/harbor-framework/terminal-bench-2-1/contents/leaderboard/submissions"
+_OR = "/api/v1/models"
 _AA_PAGE_SIZE = 200
 _TIMEOUT = 30
 # Submission files are named <date>-<org>-<model>-<effort>-<agent>.json; the
@@ -115,19 +119,32 @@ def _live_tb(base):
 
 
 # Default origins per source (spec §2). The LLM_RATINGS_HTTP_BASE override
-# swaps all three for a single test origin.
+# swaps all of them for a single test origin.
 _ORIGINS = {"deepswe": "https://deepswe.datacurve.ai",
             "aa": "https://artificialanalysis.ai",
-            "tb": "https://api.github.com"}
+            "tb": "https://api.github.com",
+            "or": "https://openrouter.ai"}
 
 
 def _origin(source):
     return os.environ.get("LLM_RATINGS_HTTP_BASE") or _ORIGINS[source]
 
 
+def _live_or(base):
+    """OpenRouter model catalog — best-effort enrichment (ticket 18): any
+    failure returns None and the run proceeds without the context field.
+    It deliberately does NOT raise SourceError — the hard-fail contract
+    covers the three rating sources only."""
+    try:
+        return _get_json(base + _OR)
+    except (OSError, ValueError):
+        return None
+
+
 def _fetch_live():
-    """Fetch every source over HTTP. Any single source failure raises a
-    SourceError naming it before any output — no silent partial tables."""
+    """Fetch every source over HTTP. Any single rating-source failure
+    raises a SourceError naming it before any output — no silent partial
+    tables. OpenRouter enrichment is best-effort and exempt."""
     api_key = os.environ.get("LLM_RATINGS_AA_API_KEY", "")
     if not api_key:
         # The CLI checks this before fetching (the ticket-11 setup error);
@@ -135,7 +152,8 @@ def _fetch_live():
         raise SourceError("aa", "LLM_RATINGS_AA_API_KEY is not set")
     return {"deepswe": _live_deepswe(_origin("deepswe")),
             "aa": _live_aa(_origin("aa"), api_key),
-            "tb": _live_tb(_origin("tb"))}
+            "tb": _live_tb(_origin("tb")),
+            "or": _live_or(_origin("or"))}
 
 
 def fetch_all(fixtures_dir):
@@ -143,9 +161,10 @@ def fetch_all(fixtures_dir):
 
     fixtures_dir=None → live HTTP (ticket 15); otherwise serve the saved
     payloads from fixtures_dir (the test seam — no network). Either way the
-    return is {source: dict}, the raw JSON payloads verbatim. Any failed live
-    fetch or missing/unreadable fixture raises a SourceError naming the
-    source: no silent partial tables.
+    return is {source: dict}, the raw JSON payloads verbatim, plus "or"
+    (OpenRouter) which is best-effort: None when unavailable. Any failed
+    live fetch or missing/unreadable rating-source fixture raises a
+    SourceError naming the source: no silent partial tables.
     """
     if fixtures_dir is None:
         return _fetch_live()
@@ -159,4 +178,12 @@ def fetch_all(fixtures_dir):
             out[source] = json.loads(p.read_text())
         except (OSError, json.JSONDecodeError) as e:
             raise SourceError(source, f"cannot read fixture {p}: {e}")
+    # OpenRouter is enrichment only: a missing or unreadable fixture file is
+    # skipped (best-effort), never a source failure.
+    p = d / "or.json"
+    if p.is_file():
+        try:
+            out["or"] = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            out["or"] = None
     return out

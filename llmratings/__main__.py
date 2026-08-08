@@ -1,9 +1,12 @@
-"""CLI entry point. Ticket 12: --category picks one of five use-case
-categories, each rendered at its fixed reasoning effort. Ticket 15: the
-default run fetches all three sources live; --fixtures opts into the offline
-test seam. Ticket 17: the interactive TUI is a thin Textual shell
-(docs/adr/0001) gated on a real TTY — no --interactive flag, and a missing
-textual dependency errors out before the fetch."""
+"""CLI entry point. Ticket 12's --category (five fixed-effort use-case
+categories) is replaced by ticket 18's --role: one of the roles from the
+checked-in roles.json (tab order = file order), each role's objective
+selecting every model's best reasoning effort. Ticket 15: the default run
+fetches all three rating sources live, plus best-effort OpenRouter
+enrichment (ticket 18); --fixtures opts into the offline test seam.
+Ticket 17: the interactive TUI is a thin Textual shell (docs/adr/0001)
+gated on a real TTY — no --interactive flag, and a missing textual
+dependency errors out before the fetch."""
 
 import argparse
 import os
@@ -14,14 +17,26 @@ from . import fetch, identity, render, tui
 
 
 def main(argv=None):
+    # LLM_RATINGS_ROLES is a test seam only (same pattern as
+    # LLM_RATINGS_HTTP_BASE): it swaps the roles file, never a second
+    # config surface — roles.json remains the one user-editable file.
+    roles_path = os.environ.get("LLM_RATINGS_ROLES") or \
+        Path(__file__).parent / "roles.json"
+    try:
+        roles = render.load_roles(roles_path)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
     ap = argparse.ArgumentParser(
         prog="llm-ratings",
         description="Model-advice tables from DeepSWE, Terminal-Bench v2.1 and "
                     "Artificial Analysis (PoC).")
-    ap.add_argument("--category", choices=[c[0] for c in render.CATEGORIES],
-                    default="Chores",
-                    help="use-case category (default: %(default)s); each "
-                         "renders at its fixed reasoning effort")
+    ap.add_argument("--role", choices=[r["name"] for r in roles],
+                    default=roles[0]["name"],
+                    help="role tab (default: %(default)s); the role's "
+                         "objective selects each model's best reasoning "
+                         "effort")
     ap.add_argument("--fixtures", metavar="DIR", default=None,
                     help="serve saved source payloads from DIR instead of "
                          "the network (the offline test seam; the default is "
@@ -52,11 +67,12 @@ def main(argv=None):
         return 1
 
     if interactive:
-        return tui.run(ds, args.category)
+        return tui.run(ds, roles, args.role)
 
+    role = next(r for r in roles if r["name"] == args.role)
     print(render.ATTRIBUTION)
     print()
-    print("\n".join(render.render(ds, args.category)))
+    print("\n".join(render.render(ds, role)))
     return 0
 
 

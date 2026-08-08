@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Chores",
+    "description": "Light, repetitive agent tasks — lookups, formatting, quick edits.",
+    "capacity": "Speed first, then price: fast and cheap models; a modest capability tier (2+) is enough; short contexts are fine.",
+    "objective": "price",
+    "floor": 2
+  },
+  {
+    "name": "Generic",
+    "description": "Mixed everyday agent work with no dominant axis.",
+    "capacity": "Intelligence per dollar: the best PPI; middling speed is fine; context moderate.",
+    "objective": "ppi",
+    "floor": 2
+  },
+  {
+    "name": "Researcher",
+    "description": "Deep-dive questions, analysis, and synthesis — being right beats being fast.",
+    "capacity": "Peak reasoning: the highest capability tier; speed and price are secondary; long context for long documents.",
+    "objective": "cap",
+    "floor": 2
+  },
+  {
+    "name": "Coder",
+    "description": "Implementation work — the model that solves the hard part of the task.",
+    "capacity": "Peak reasoning and strong coding: highest capability tier; speed matters in tight loops; long context for big repos.",
+    "objective": "cap",
+    "floor": 2
+  },
+  {
+    "name": "Orchestrator",
+    "description": "Plans, routes, and delegates — many cheap calls, one smart coordinator.",
+    "capacity": "Intelligence per dollar: strong reasoning without the flagship price; speed good enough for many round trips.",
+    "objective": "ppi",
+    "floor": 2
+  }
+]

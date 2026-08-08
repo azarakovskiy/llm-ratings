@@ -1,13 +1,17 @@
-"""CLI contract tests — tickets 11–15. Observable output only: exit codes and
+"""CLI contract tests — tickets 11–18. Observable output only: exit codes and
 rendered lines, run through the real CLI in a subprocess against the
 checked-in fixtures or a local stdlib HTTP origin (no external network, no
-mocks). Ticket 13's TB grades at high/max efforts are rendered in-process
-through the same fixture seam (the CLI's one rendered category is Chores/low,
-where TB is `—`); the collapse tie-break and the wholesale row count are
-asserted on the dataset the tables are built from. Ticket 15's live fetchers
-run against the local origin via the LLM_RATINGS_HTTP_BASE seam: live output
-must match fixture-mode output, and each source's failure path must name the
-source and exit nonzero with no output."""
+mocks). Ticket 13's TB grades are rendered in-process through the same
+fixture seam (the batch CLI's default role is Chores/price, where most rows
+sit at low — the Researcher role's max/xhigh rows carry the TB column);
+the collapse tie-break and the wholesale row count are asserted on the
+dataset the tables are built from. Ticket 15's live fetchers run against
+the local origin via the LLM_RATINGS_HTTP_BASE seam: live output must match
+fixture-mode output, and each source's failure path must name the source
+and exit nonzero with no output. Ticket 18: roles come from roles.json
+(LLM_RATINGS_ROLES swaps the file — a test seam), objectives select each
+model's effort, the price-lens floor drops below-floor models, OpenRouter
+enrichment is best-effort (live 500 degrades to a full table)."""
 
 import json
 import os
@@ -25,6 +29,9 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))  # in-process `import llmratings` for render tests
 FIXTURES = REPO / ".scratch" / "llm-ratings" / "fixtures" / "main"
 
+from llmratings import render  # noqa: E402  (sys.path setup above)
+ROLES = render.load_roles(REPO / "llmratings" / "roles.json")
+
 
 def run_cli(env_extra, *args):
     env = dict(os.environ)
@@ -34,9 +41,9 @@ def run_cli(env_extra, *args):
         capture_output=True, text=True, cwd=REPO, env=env)
 
 
-def run_fixtures(env_extra=None):
+def run_fixtures(env_extra=None, *args):
     return run_cli(env_extra or {"LLM_RATINGS_AA_API_KEY": "dummy"},
-                   "--fixtures", str(FIXTURES))
+                   "--fixtures", str(FIXTURES), *args)
 
 
 def _row_after(lines, needle):
@@ -74,8 +81,8 @@ class _LiveServer:
     machine): serves the fixture payloads in the shapes the live fetchers
     expect — deepswe.json verbatim; aa.json split into page_size=200 pages;
     tb.json's listing with download_urls rewritten to this origin plus one
-    JSON per submission. `fail` is a path substring whose requests return
-    500 — the per-source failure contract."""
+    JSON per submission; or.json at /api/v1/models. `fail` is a path
+    substring whose requests return 500 — the per-source failure contract."""
 
     PAGE_SIZE = 200
 
@@ -120,6 +127,11 @@ class _LiveServer:
             page = int(parse_qs(urlsplit(path).query).get("page", ["1"])[0])
             batch = aa["data"][(page - 1) * self.PAGE_SIZE: page * self.PAGE_SIZE]
             return json.dumps(dict(aa, data=batch)).encode()
+        if path.startswith("/api/v1/models"):
+            p = self.dir / "or.json"
+            if not p.is_file():
+                raise KeyError(path)
+            return p.read_bytes()
         if path.startswith("/repos/"):
             tb = json.loads((self.dir / "tb.json").read_text())
             listing = []
@@ -177,8 +189,22 @@ class FixtureFailure(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("Terminal-Bench", r.stderr)
 
+    def test_missing_or_is_best_effort(self):
+        # OpenRouter is enrichment only (ticket 18): a fixture without
+        # or.json must render full tables, never fail.
+        with tempfile.TemporaryDirectory() as td:
+            for f in ("deepswe.json", "aa.json", "tb.json"):
+                Path(td, f).write_text(Path(FIXTURES, f).read_text())
+            r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"}, "--fixtures", td)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("frontier: ", r.stdout)
+
 
 class ChoresTable(unittest.TestCase):
+    """The default role (Chores, price lens with floor 2): each model at its
+    cheapest above-floor configuration — Luna's low config grades 1 and
+    drops out, so Luna enters at medium; the rest at low."""
+
     @classmethod
     def setUpClass(cls):
         cls.r = run_fixtures()
@@ -196,6 +222,12 @@ class ChoresTable(unittest.TestCase):
         self.assertEqual(self.r.returncode, 0)
         self.assertIn("artificialanalysis.ai", self.r.stdout)
 
+    def test_role_header_with_capacity(self):
+        self.assertIn("Chores — objective price — cheapest first · floor 2",
+                      self.r.stdout)
+        self.assertIn("Chores: Light, repetitive agent tasks", self.r.stdout)
+        self.assertIn("capacity: Speed first, then price", self.r.stdout)
+
     def test_sections_and_star(self):
         joined = "\n".join(self.lines)
         self.assertIn("★ frontier", joined)
@@ -210,33 +242,34 @@ class ChoresTable(unittest.TestCase):
         self.assertTrue(path.endswith("→ Claude Opus 5 max 61 @ $2.34"))
 
     def test_cheapest_first_order(self):
-        models = ["Kimi K3", "GPT-5.6 Sol", "GPT-5.5", "Claude Opus 5",
-                  "gpt-5-6-terra"]
+        models = ["Kimi K3", "GPT-5.6 Sol", "GPT-5.5", "Claude Opus 5"]
         idx = [next(i for i, ln in enumerate(self.lines)
                     if m in ln and ln.startswith("  "))
                for m in models]
         self.assertEqual(idx, sorted(idx), "dominated rows not cheapest-first")
 
-    def test_unpriced_row_last_without_ppi(self):
-        terra, _ = self.row_after("gpt-5-6-terra")
-        # price n/a, Δ columns —, PPI column n/a, Spd —: no "k" magnitude
-        # anywhere in the row
-        self.assertRegex(terra, r"n/a\s+—\s+—\s+n/a\s+—\s*$")
-        self.assertEqual(terra, self.lines[-1],
-                         "unpriced row must sort last")
+    def test_luna_enters_at_medium(self):
+        # Luna low grades 1 (below the floor 2), so the price lens moves it
+        # to medium — the Effort column must say so.
+        luna, _ = self.row_after("GPT-5.6 Luna")
+        self.assertIn("medium", luna)
 
     def test_tb_column_dash(self):
         header = next(ln for ln in self.lines if "DSW" in ln and "TB" in ln)
         self.assertIn("TB", header)
-        for model in ["GPT-5.6 Luna", "Kimi K3", "Claude Opus 5"]:
+        for model in ["GPT-5.6 Luna", "Kimi K3", "GPT-5.6 Sol", "GPT-5.5",
+                      "Claude Opus 5"]:
             row, _ = self.row_after(model)
             self.assertIn("—", row)
 
     def test_grades_per_source(self):
+        # Luna medium: DSW grade 1 (its .113 score is the low end of the
+        # medium set), AA grade 2 (38.1 in a 4-model set). Kimi low: DSW has
+        # no low row → `—`, AA grade 3.
         luna, _ = self.row_after("GPT-5.6 Luna")
-        self.assertRegex(luna, r"^\s*1\s+1\s+—\s+GPT-5\.6 Luna")
-        terra, _ = self.row_after("gpt-5-6-terra")
-        self.assertRegex(terra, r"^\s*2\s+—\s+—\s+gpt-5-6-terra")
+        self.assertRegex(luna, r"^\s*1\s+2\s+—\s+GPT-5\.6 Luna")
+        kimi, _ = self.row_after("Kimi K3")
+        self.assertRegex(kimi, r"^\s*—\s+3\s+—\s+Kimi K3")
 
     def test_delta_columns(self):
         sol, _ = self.row_after("GPT-5.6 Sol")
@@ -263,55 +296,66 @@ class ChoresTable(unittest.TestCase):
         _, arrow = self.row_after("Claude Opus 5")
         self.assertEqual(arrow.strip(), "→ GPT-5.6 Sol medium: +3 pts, save $0.036")
 
-    def test_unpriced_row_has_no_arrow(self):
-        _, arrow = self.row_after("gpt-5-6-terra")
-        self.assertIsNone(arrow)
+    def test_source_only_model_absent(self):
+        # Terra has no AA row, so no objective-selected configuration: it
+        # never enters a role table (spec §3/§4 — absent from ranked tables).
+        self.assertNotIn("gpt-5-6-terra", self.r.stdout)
 
 
-class FiveCategories(unittest.TestCase):
-    """Ticket 12: --category selects any of the five; each renders at its
-    fixed effort, sorted by its league axis so the Δ columns read the ladder."""
+class FiveRoles(unittest.TestCase):
+    """Ticket 18: --role selects any of the roles from roles.json; each
+    renders every model at its objective-selected configuration, sorted by
+    the objective's value so the Δ columns read the ladder."""
 
-    EFFORT = {"Chores": "low", "Everyday": "medium", "Deliberate": "high",
-              "Deep": "max", "Best Value": "high"}
+    OBJECTIVE = {"Chores": "price", "Generic": "ppi", "Researcher": "cap",
+                 "Coder": "cap", "Orchestrator": "ppi"}
     # Combined table order (★ frontier section first, then ✗ dominated),
-    # each section on its league axis: cheapest first / PPI desc /
-    # capability (AA) desc. Hand-computed from the checked-in fixtures.
+    # each section on its objective's value. Hand-computed from the
+    # checked-in fixtures.
     ORDER = {
         "Chores": ["GPT-5.6 Luna", "Kimi K3", "GPT-5.6 Sol", "GPT-5.5",
-                   "Claude Opus 5", "gpt-5-6-terra"],
-        "Everyday": ["GPT-5.6 Luna", "GPT-5.6 Sol", "Claude Opus 5",
-                     "GPT-5.5", "gpt-5-6-terra"],
-        "Deliberate": ["Claude Opus 5", "GPT-5.6 Sol", "GPT-5.6 Luna",
-                       "GPT-5.5", "gpt-5-6-terra"],
-        "Deep": ["Claude Opus 5", "GPT-5.6 Luna", "GPT-5.6 Sol", "Kimi K3",
-                 "gpt-5-6-terra"],
-        "Best Value": ["GPT-5.6 Luna", "GPT-5.6 Sol", "Claude Opus 5",
-                       "GPT-5.5", "gpt-5-6-terra"],
+                   "Claude Opus 5"],
+        "Generic": ["GPT-5.6 Luna", "GPT-5.6 Sol", "Kimi K3", "GPT-5.5",
+                    "Claude Opus 5"],
+        "Researcher": ["Claude Opus 5", "GPT-5.6 Luna", "GPT-5.6 Sol",
+                       "Kimi K3", "GPT-5.5"],
+        "Coder": ["Claude Opus 5", "GPT-5.6 Luna", "GPT-5.6 Sol",
+                  "Kimi K3", "GPT-5.5"],
+        "Orchestrator": ["GPT-5.6 Luna", "GPT-5.6 Sol", "Kimi K3",
+                         "GPT-5.5", "Claude Opus 5"],
     }
 
     @classmethod
-    def category_lines(cls, name):
+    def role_lines(cls, name):
         r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
-                    "--fixtures", str(FIXTURES), "--category", name)
+                    "--fixtures", str(FIXTURES), "--role", name)
         assert r.returncode == 0, r.stderr
         return [ln.rstrip() for ln in r.stdout.splitlines()]
 
     @classmethod
     def setUpClass(cls):
-        cls.lines = {name: cls.category_lines(name) for name in cls.EFFORT}
+        cls.lines = {name: cls.role_lines(name) for name in cls.OBJECTIVE}
 
     def row_after(self, name, needle):
         idx = next(i for i, ln in enumerate(self.lines[name]) if needle in ln
                    and ln.startswith("  "))
         return self.lines[name][idx]
 
-    def test_each_category_renders_at_its_fixed_effort(self):
-        for name, effort in self.EFFORT.items():
+    def test_each_role_renders_its_objective(self):
+        for name, objective in self.OBJECTIVE.items():
             first = next(ln for ln in self.lines[name]
-                         if ln.startswith(f"{name} — "))
-            self.assertTrue(first.startswith(f"{name} — {effort} effort —"),
-                            f"{name}: {first}")
+                         if ln.startswith(f"{name} — objective "))
+            self.assertTrue(first.startswith(
+                f"{name} — objective {objective} —"), f"{name}: {first}")
+
+    def test_floor_shown_under_price_lens_only(self):
+        chores = next(ln for ln in self.lines["Chores"]
+                      if ln.startswith("Chores — "))
+        self.assertIn("· floor 2", chores)
+        for name in ("Generic", "Researcher", "Coder", "Orchestrator"):
+            head = next(ln for ln in self.lines[name]
+                        if ln.startswith(f"{name} — "))
+            self.assertNotIn("floor", head)
 
     def test_league_axis_order(self):
         for name, models in self.ORDER.items():
@@ -320,11 +364,21 @@ class FiveCategories(unittest.TestCase):
                         if m in ln and ln.startswith("  "))
                    for m in models]
             self.assertEqual(idx, sorted(idx),
-                             f"{name} rows not on their league axis")
+                             f"{name} rows not on their objective's order")
+
+    def test_mixed_efforts_per_row(self):
+        # cap (Researcher/Coder): GPT-5.5 has no max variant → its row sits
+        # at xhigh while the others sit at max.
+        for name in ("Researcher", "Coder"):
+            gpt55 = self.row_after(name, "GPT-5.5")
+            self.assertIn("xhigh", gpt55)
+            opus = self.row_after(name, "Claude Opus 5")
+            self.assertIn("max", opus)
 
     def test_deltas_read_the_ladder(self):
-        # Chores (cheapest first): Sol +2.8 pts from the frontier Luna,
-        # Opus +7.1 from GPT-5.5 — small near-tie deltas on the price ladder.
+        # Chores (price): Kimi opens the dominated section, Sol +2.8 pts
+        # from it, Opus +7.1 from GPT-5.5 — near-tie deltas on the price
+        # ladder.
         chores = self.lines["Chores"]
         sol = self.row_after("Chores", "GPT-5.6 Sol")
         self.assertIn("+2.8", sol)
@@ -332,55 +386,171 @@ class FiveCategories(unittest.TestCase):
         opus = self.row_after("Chores", "Claude Opus 5")
         self.assertIn("+7.1", opus)
         self.assertIn("+$0.166", opus)
-        # Everyday (PPI desc): Sol +15.5 pts from Luna, Opus +2.7 from Sol —
-        # near-ties visible as small numbers, not swallowed.
-        ev = self.lines["Everyday"]
-        sol = self.row_after("Everyday", "GPT-5.6 Sol")
-        self.assertIn("+15.5", sol)
-        self.assertIn("+$0.379", sol)
-        opus = self.row_after("Everyday", "Claude Opus 5")
-        self.assertIn("+2.7", opus)
-        self.assertIn("+$0.332", opus)
-        # Deliberate (capability desc): Sol is 3.0 pts under Opus.
-        de = self.lines["Deliberate"]
-        sol = self.row_after("Deliberate", "GPT-5.6 Sol")
-        self.assertIn("-3.0", sol)
-        self.assertIn("-$0.677", sol)
-        # Deep dominated: Kimi 1.8 pts under Sol max — a near-tie.
-        deep = self.lines["Deep"]
-        kimi = self.row_after("Deep", "Kimi K3")
+        # Generic (ppi): Luna is the only frontier row; Sol opens the
+        # dominated section; Kimi -2.8 pts from Sol — a near-tie visible as
+        # a small number, not swallowed.
+        generic = self.lines["Generic"]
+        kimi = self.row_after("Generic", "Kimi K3")
+        self.assertIn("-2.8", kimi)
+        self.assertIn("-$0.0021", kimi)
+        opus = self.row_after("Generic", "Claude Opus 5")
+        self.assertIn("+7.1", opus)
+        self.assertIn("+$0.166", opus)
+        # Researcher (cap): Luna -9.5 from the frontier Opus; the dominated
+        # section's Sol opens, Kimi -1.8 from Sol, GPT-5.5 -2.3 from Kimi.
+        res = self.lines["Researcher"]
+        luna = self.row_after("Researcher", "GPT-5.6 Luna")
+        self.assertIn("-9.5", luna)
+        self.assertIn("-$2.29", luna)
+        kimi = self.row_after("Researcher", "Kimi K3")
         self.assertIn("-1.8", kimi)
-        # Best Value (PPI desc): Sol +9.8 pts from Luna, Opus +3.0 from Sol.
-        bv = self.lines["Best Value"]
-        sol = self.row_after("Best Value", "GPT-5.6 Sol")
-        self.assertIn("+9.8", sol)
-        self.assertIn("+$0.527", sol)
-        opus = self.row_after("Best Value", "Claude Opus 5")
-        self.assertIn("+3.0", opus)
-        self.assertIn("+$0.677", opus)
+        self.assertIn("-$0.377", kimi)
+        gpt55 = self.row_after("Researcher", "GPT-5.5")
+        self.assertIn("-2.3", gpt55)
+        self.assertIn("+$0.32", gpt55)
 
     def test_dash_where_no_row_at_effort(self):
-        # Terra has no AA row at any effort: AA and TB cells are — at medium,
-        # no PPI. Kimi K3 has no medium row at all → absent from Everyday;
-        # GPT-5.5 has no max row → absent from Deep.
-        ev = self.lines["Everyday"]
-        terra = self.row_after("Everyday", "gpt-5-6-terra")
-        self.assertRegex(terra, r"\d\s+—\s+—\s+gpt-5-6-terra")
-        self.assertNotIn("Kimi", ev)
-        de = self.lines["Deliberate"]
-        self.assertNotIn("Kimi", de)
-        deep = self.lines["Deep"]
-        self.assertNotIn("GPT-5.5", deep)
+        # Kimi has no DSW low row → its Chores row shows `—` in the DSW
+        # cell while AA/TB grade from its config.
+        self.assertRegex(self.row_after("Chores", "Kimi K3"),
+                         r"^\s*—\s+3\s+—\s+Kimi K3")
 
-    def test_unknown_category_errors(self):
+    def test_unknown_role_errors(self):
         r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
-                    "--fixtures", str(FIXTURES), "--category", "bogus")
-        self.assertNotEqual(r.returncode, 0)
+                    "--fixtures", str(FIXTURES), "--role", "bogus")
+        self.assertEqual(r.returncode, 2)
         self.assertIn("invalid choice", r.stderr)
-        self.assertIn("Best Value", r.stderr)
+        self.assertIn("Orchestrator", r.stderr)
+
+
+class RolesFile(unittest.TestCase):
+    """Ticket 18: roles.json is the config surface — a role added to the
+    file creates a tab (LLM_RATINGS_ROLES swaps the file; the seam mirrors
+    LLM_RATINGS_HTTP_BASE)."""
+
+    SIX = [
+        {"name": "Mail Sorter", "description": "Triage an inbox.",
+         "capacity": "Fast and cheap; speed matters.", "objective": "price"},
+        {"name": "Chores", "description": "Light, repetitive agent tasks.",
+         "capacity": "Speed first, then price.", "objective": "price",
+         "floor": 2},
+        {"name": "Generic", "description": "Mixed everyday work.",
+         "capacity": "Best PPI.", "objective": "ppi", "floor": 2},
+        {"name": "Researcher", "description": "Deep-dive questions.",
+         "capacity": "Peak reasoning.", "objective": "cap", "floor": 2},
+        {"name": "Coder", "description": "Implementation work.",
+         "capacity": "Peak reasoning.", "objective": "cap", "floor": 2},
+        {"name": "Orchestrator", "description": "Plans and delegates.",
+         "capacity": "Best PPI.", "objective": "ppi", "floor": 2},
+    ]
+
+    def test_added_role_renders_and_defaults_follow_file_order(self):
+        # Mail Sorter sits FIRST in the file → it becomes the default tab
+        # (file order is authoritative), and its omitted floor defaults to 2.
+        with tempfile.TemporaryDirectory() as td:
+            Path(td, "roles.json").write_text(json.dumps(self.SIX))
+            env = {"LLM_RATINGS_AA_API_KEY": "dummy",
+                   "LLM_RATINGS_ROLES": str(Path(td, "roles.json"))}
+            r = run_cli(env, "--fixtures", str(FIXTURES))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Mail Sorter — objective price — cheapest first · floor 2",
+                      r.stdout)
+        self.assertNotIn("Chores — objective", r.stdout)
+
+    def test_added_role_selectable_by_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            Path(td, "roles.json").write_text(json.dumps(self.SIX))
+            env = {"LLM_RATINGS_AA_API_KEY": "dummy",
+                   "LLM_RATINGS_ROLES": str(Path(td, "roles.json"))}
+            r = run_cli(env, "--fixtures", str(FIXTURES), "--role", "Mail Sorter")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Mail Sorter — objective price", r.stdout)
+
+    def test_corrupt_roles_file_errors_cleanly(self):
+        with tempfile.TemporaryDirectory() as td:
+            Path(td, "roles.json").write_text('{"name": "not a list"}')
+            r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy",
+                         "LLM_RATINGS_ROLES": str(Path(td, "roles.json"))},
+                        "--fixtures", str(FIXTURES))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("roles", r.stderr.lower())
+
+
+class PriceFloor(unittest.TestCase):
+    """Ticket 18: under the price lens, a model whose configurations all
+    grade below the role's floor does not appear; under cap it still does —
+    the floor is a price-lens filter, not an inclusion rule."""
+
+    @staticmethod
+    def aa_row(i, name, slug, ii, cost, spd, effort):
+        return {"id": i, "name": f"{name} ({effort})",
+                "slug": f"{slug}-{effort}",
+                "model_creator": {"name": "Acme"},
+                "evaluations": {"artificial_analysis_intelligence_index": ii},
+                "artificial_analysis_intelligence_index_cost":
+                    {"cost_per_task": {"total_cost": cost}},
+                "performance": {"median_output_tokens_per_second": spd}}
+
+    @classmethod
+    def setUpClass(cls):
+        # Low scores {10, 20, 30, 50, 60} → grades 1,2,3,4,5; max scores
+        # {30, 35, 40, 55, 70} → 1,2,3,4,5. Luna grades 1 at both efforts →
+        # below floor 2 everywhere; Kimi and Sol qualify at low. The two
+        # filler models are AA-only (no DSW/TB rating) so they shape the
+        # grade bins without ever entering the tables.
+        cls.td = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.td.cleanup)
+        aa = {"data": [
+            cls.aa_row("u1", "GPT-5.6 Luna", "gpt-5-6-luna", 10, 0.1, 100, "low"),
+            cls.aa_row("u2", "GPT-5.6 Luna", "gpt-5-6-luna", 30, 0.2, 110, "max"),
+            cls.aa_row("u3", "Kimi K3", "kimi-k3", 50, 0.3, 120, "low"),
+            cls.aa_row("u4", "Kimi K3", "kimi-k3", 55, 0.6, 130, "max"),
+            cls.aa_row("u5", "GPT-5.6 Sol", "gpt-5-6-sol", 60, 0.5, 140, "low"),
+            cls.aa_row("u6", "GPT-5.6 Sol", "gpt-5-6-sol", 70, 1.0, 150, "max"),
+            cls.aa_row("u7", "GPT-5.4", "gpt-5-4", 20, 9.9, 160, "low"),
+            cls.aa_row("u8", "GPT-5.4", "gpt-5-4", 35, 9.9, 170, "max"),
+            cls.aa_row("u9", "GPT-5.3", "gpt-5-3", 30, 9.9, 180, "low"),
+            cls.aa_row("uA", "GPT-5.3", "gpt-5-3", 40, 9.9, 190, "max"),
+        ]}
+        Path(cls.td.name, "aa.json").write_text(json.dumps(aa))
+        ds = {"rows": [
+            {"model": "gpt-5-6-luna", "reasoning_effort": "low", "pass_at_1": 0.2},
+            {"model": "kimi-k3", "reasoning_effort": "low", "pass_at_1": 0.5},
+            {"model": "gpt-5-6-sol", "reasoning_effort": "low", "pass_at_1": 0.6},
+        ]}
+        Path(cls.td.name, "deepswe.json").write_text(json.dumps(ds))
+        Path(cls.td.name, "tb.json").write_text(
+            json.dumps({"listing": [], "submissions": {}}))
+
+    def lines_for(self, role):
+        r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
+                    "--fixtures", self.td.name, "--role", role)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return [ln.rstrip() for ln in r.stdout.splitlines()]
+
+    def test_below_floor_model_absent_under_price(self):
+        # Luna's configs are on the frontier path (the envelope is
+        # cross-effort and floor-free), but no table ROW may carry it: the
+        # floor filter is per-model row selection.
+        lines = self.lines_for("Chores")
+        rows = [ln for ln in lines if ln.startswith("  ")]
+        self.assertFalse(any("GPT-5.6 Luna" in ln for ln in rows),
+                         "below-floor model must not appear as a row")
+        self.assertTrue(any("Kimi K3" in ln for ln in rows))
+        self.assertTrue(any("GPT-5.6 Sol" in ln for ln in rows))
+
+    def test_same_model_present_under_cap(self):
+        # The floor only applies under the price lens: cap selects Luna's
+        # max configuration (30 > 20) and it renders at max effort.
+        lines = self.lines_for("Researcher")
+        luna = next(ln for ln in lines if "GPT-5.6 Luna" in ln
+                    and ln.startswith("  "))
+        self.assertIn("max", luna)
+
+
 class TierColumns(unittest.TestCase):
     """Ticket 14: the Spd column renders the speed tier (AA median output
-    tokens/s at the category's effort, 5 = fastest); a model with no AA row
+    tokens/s at the row's effort, 5 = fastest); a row without AA speed
     shows a dash. Benchmark-run durations never enter this axis."""
 
     @classmethod
@@ -398,17 +568,13 @@ class TierColumns(unittest.TestCase):
         return _cell_at(row, self.spd_at, 4)
 
     def test_spd_renders_speed_tier(self):
-        # Low-effort speeds: Luna 146.9, GPT-5.5 71.8, Sol 62.1, Opus 53.8,
-        # Kimi 35.0 -> five distinct values -> tiers 5,4,3,2,1 (5 = fastest).
+        # Chores speeds: Luna medium 156.1, GPT-5.5 low 71.8, Sol low 62.1,
+        # Opus low 53.8, Kimi low 35.0 -> five distinct values -> tiers
+        # 5,4,3,2,1 (5 = fastest).
         for model, expected in [("GPT-5.6 Luna", "5"), ("GPT-5.5", "4"),
                                 ("GPT-5.6 Sol", "3"), ("Claude Opus 5", "2"),
                                 ("Kimi K3", "1")]:
             self.assertEqual(self.spd_of(self.row_after(model)), expected, model)
-
-    def test_spd_dash_without_aa_row(self):
-        # Terra has no AA row at all -> no speed -> dash, like its other
-        # source-only columns. DeepSWE's duration/task never grades it.
-        self.assertEqual(self.spd_of(self.row_after("gpt-5-6-terra")), "—")
 
 
 class TierBinning(unittest.TestCase):
@@ -421,7 +587,7 @@ class TierBinning(unittest.TestCase):
     MODELS = [("gpt-5-6-luna", "GPT-5.6 Luna"), ("gpt-5-6-sol", "GPT-5.6 Sol"),
               ("claude-opus-5", "Claude Opus 5"), ("gpt-5-5", "GPT-5.5")]
 
-    def lines_for(self, speeds, costs=None):
+    def lines_for(self, speeds, costs=None, role="Chores"):
         """Run the CLI on a hand-built fixture: one low-effort config per
         model, AA rows carrying the given speeds. Returns stdout lines."""
         models = self.MODELS[:len(speeds)]
@@ -440,7 +606,8 @@ class TierBinning(unittest.TestCase):
             # TB source; the merged CLI still requires the file (ticket 13).
             Path(td, "tb.json").write_text(
                 json.dumps({"listing": [], "submissions": {}}))
-            r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"}, "--fixtures", td)
+            r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
+                        "--fixtures", td, "--role", role)
             self.assertEqual(r.returncode, 0, r.stderr)
             lines = [ln.rstrip() for ln in r.stdout.splitlines()]
             header = next(ln for ln in lines if ln.startswith("DSW"))
@@ -469,8 +636,10 @@ class TierBinning(unittest.TestCase):
 
     def test_no_price_no_ppi_but_speed_renders(self):
         # Luna has an AA row with no per-task cost: PPI n/a (no value tier),
-        # while the speed tier still grades from tokens/s.
-        lines = self.lines_for([100, 50], costs=["null", 0.5])
+        # while the speed tier still grades from tokens/s. The price lens
+        # cannot select an unpriced config, so the cap lens (Researcher) is
+        # the view that renders it.
+        lines = self.lines_for([100, 50], costs=["null", 0.5], role="Researcher")
         header = next(ln for ln in lines if ln.startswith("DSW"))
         ppi_at = header.index("PPI")
         luna = _row_after(lines, "GPT-5.6 Luna")
@@ -537,21 +706,23 @@ class EdgeFixture(unittest.TestCase):
 
 
 class TerminalBench(unittest.TestCase):
-    """Ticket 13 — Terminal-Bench v2.1 as a third source. The CLI's rendered
-    category (Chores) is low effort, where TB is `—`; the high/max tables are
-    rendered in-process through the same fixture seam (fetch → identity →
-    tier → render), so the TB grade column is observable end to end."""
+    """Ticket 13 — Terminal-Bench v2.1 as a third source. The batch CLI's
+    default role (Chores) renders low/medium rows, where TB is `—`; the
+    cap-lens tables (Researcher/Coder) carry max/xhigh rows, so the TB
+    grade column is observable end to end through the same fixture seam
+    (fetch → identity → tier → render)."""
 
     TB_MODELS = {"gpt-5-6-luna", "gpt-5-6-sol", "gpt-5-5", "claude-opus-5"}
 
     @classmethod
     def setUpClass(cls):
-        from llmratings import fetch, identity, render
+        from llmratings import fetch, identity
         raw = fetch.fetch_all(FIXTURES)
         aliases = identity.load_aliases(REPO / "llmratings" / "aliases.json")
         cls.ds = identity.build(aliases, raw)
-        cls.lines = {cat: [ln.rstrip() for ln in render.render(cls.ds, cat)]
-                     for cat in ("Deliberate", "Deep", "Everyday")}
+        by_name = {r["name"]: r for r in ROLES}
+        cls.lines = {name: [ln.rstrip() for ln in render.render(cls.ds, by_name[name])]
+                     for name in ("Researcher", "Coder", "Generic")}
 
     def row(self, cat, prefix, model):
         """First table row in cat whose line matches prefix + contains model —
@@ -560,48 +731,42 @@ class TerminalBench(unittest.TestCase):
                     if re.match(prefix, ln) and model in ln)
 
     def test_tb_dash_at_chores_low(self):
+        # Every Chores row sits at low/medium where v2.1 has no submissions
+        # — the TB cell is `—` even for Kimi, whose DSW cell is `—` too.
         r = run_fixtures()
         self.assertEqual(r.returncode, 0)
         lines = [ln.rstrip() for ln in r.stdout.splitlines()]
+        header = next(ln for ln in lines if ln.startswith("DSW"))
+        tb_at = header.index("TB")
         for model in ("GPT-5.6 Luna", "GPT-5.6 Sol", "GPT-5.5",
-                      "Claude Opus 5"):
-            ln = next(ln for ln in lines
-                      if re.match(r"^\s*\d+\s+\d+\s+—\s+", ln)
-                      and model in ln)
-            self.assertRegex(ln, rf"^\s*\d+\s+\d+\s+—\s+{model}")
+                      "Claude Opus 5", "Kimi K3"):
+            ln = _row_after(lines, model)
+            self.assertEqual(_cell_at(ln, tb_at, 3), "—", model)
 
-    def test_tb_dash_at_everyday_medium(self):
-        # TB covers high/xhigh/max only — every medium row shows `—`.
-        # Data rows start with the right-aligned DSW cell (≤2 spaces, then a
-        # digit or —); titles/header/sections/arrows don't match.
-        rows = [ln for ln in self.lines["Everyday"]
+    def test_tb_dash_at_generic_low(self):
+        # TB covers high/xhigh/max only — every Generic (ppi → low) row
+        # shows `—`. Data rows start with the right-aligned DSW cell (≤2
+        # spaces, then a digit or —); titles/header/sections/arrows don't
+        # match.
+        rows = [ln for ln in self.lines["Generic"]
                 if re.match(r"^ {0,2}(?:\d|—)", ln)]
         self.assertTrue(rows)
         for ln in rows:
             self.assertRegex(ln, r"^\s*\S+\s+\S+\s+—\s")
 
-    def test_tb_grades_at_high(self):
-        # Deliberate = high. Collapsed TB scores: Sol .712, Luna .701,
-        # GPT-5.5 .671 → quintile grades 5/4/2 over TB's own set; Opus 5 has
-        # no TB high row → `—`.
+    def test_tb_grades_on_researcher(self):
+        # cap rows: Opus/Sol/Luna/Kimi at max, GPT-5.5 at xhigh (no max
+        # variant). Max TB scores: Sol .769, Luna .757, Opus .689 → grades
+        # 5/4/2 over the collapsed set; Kimi has no TB max row → `—`.
+        # GPT-5.5 xhigh has no TB xhigh row → `—`.
         for model, prefix in [
-            ("GPT-5.6 Sol", r"^\s*4\s+4\s+5\s+"),
-            ("GPT-5.6 Luna", r"^\s*1\s+2\s+4\s+"),
-            ("GPT-5.5", r"^\s*3\s+3\s+2\s+"),
-            ("Claude Opus 5", r"^\s*5\s+5\s+—\s+")]:
-            self.assertRegex(self.row("Deliberate", prefix, model),
-                             prefix + model)
-
-    def test_tb_grades_at_max(self):
-        # Deep = max. Collapsed TB scores: Sol .769, Luna .757, Opus 5 .689
-        # → grades 5/4/2; Kimi and Terra have no TB rows → `—`.
-        for model, prefix in [
-            ("GPT-5.6 Sol", r"^\s*4\s+4\s+5\s+"),
-            ("GPT-5.6 Luna", r"^\s*1\s+2\s+4\s+"),
             ("Claude Opus 5", r"^\s*5\s+5\s+2\s+"),
+            ("GPT-5.6 Sol", r"^\s*4\s+4\s+5\s+"),
+            ("GPT-5.6 Luna", r"^\s*1\s+2\s+4\s+"),
             ("Kimi K3", r"^\s*2\s+3\s+—\s+"),
-            ("gpt-5-6-terra", r"^\s*3\s+—\s+—\s+")]:
-            self.assertRegex(self.row("Deep", prefix, model), prefix + model)
+            ("GPT-5.5", r"^\s*4\s+3\s+—\s+")]:
+            self.assertRegex(self.row("Researcher", prefix, model),
+                             prefix + model)
 
     def test_collapse_best_agent(self):
         from llmratings import identity
@@ -610,7 +775,7 @@ class TerminalBench(unittest.TestCase):
         best = identity.best_tb(self.ds.ratings, "high")
         self.assertEqual(best["gpt-5-5"].score, 0.671)
         self.assertEqual(best["gpt-5-5"].agent, "warp")
-        rows = [ln for ln in self.lines["Deliberate"]
+        rows = [ln for ln in self.lines["Generic"]
                 if "GPT-5.5" in ln and ln.startswith("  ")]
         self.assertEqual(len(rows), 1)
 
@@ -625,10 +790,10 @@ class TerminalBench(unittest.TestCase):
 
     def test_xhigh_rows_attach_and_collapse(self):
         from llmratings import identity
-        # No category fixes xhigh effort yet (the `e` override is ticket 16),
-        # so the xhigh leg of the acceptance criteria is asserted at the
-        # dataset level: both xhigh rows attach and collapse to one rating per
-        # model — the same code path the high/max columns render.
+        # GPT-5.5's cap row sits at xhigh; the xhigh leg of the acceptance
+        # criteria is asserted at the dataset level: both xhigh rows attach
+        # and collapse to one rating per model — the same code path the
+        # max columns render.
         xhigh = [r for r in self.ds.ratings
                  if r.source == "tb" and r.effort == "xhigh"]
         self.assertEqual(len(xhigh), 2)
@@ -652,8 +817,10 @@ class LiveAcquisition(unittest.TestCase):
     machine: a local stdlib HTTP server serves the checked-in fixture payloads
     in the shapes the live fetchers expect (the LLM_RATINGS_HTTP_BASE seam),
     and can 500 any single path to exercise the per-source failure contract.
-    The alias-seed extension degrades an unknown model to source-only identity
-    through the fixture seam."""
+    The alias-seed extension degrades an unknown model to source-only
+    identity through the fixture seam; ticket 18's OpenRouter enrichment is
+    best-effort (a 500 degrades to a full table, the context join is
+    dataset-level)."""
 
     KEY = {"LLM_RATINGS_AA_API_KEY": "dummy"}
 
@@ -664,8 +831,8 @@ class LiveAcquisition(unittest.TestCase):
 
     def test_live_missing_key_setup_error(self):
         # No --fixtures: the default is now live. A missing key must hit the
-        # ticket-11 setup error before any fetch (even with a bogus origin).
-        r = run_cli({"LLM_RATINGS_AA_API_KEY": ""}, "--category", "Chores")
+        # ticket-11 setup error before any fetch.
+        r = run_cli({"LLM_RATINGS_AA_API_KEY": ""})
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(r.stdout, "")
         self.assertIn("LLM_RATINGS_AA_API_KEY", r.stderr)
@@ -704,6 +871,19 @@ class LiveAcquisition(unittest.TestCase):
         self.assertEqual(r.stdout, "")
         self.assertIn("Terminal-Bench", r.stderr)
 
+    def test_live_or_failure_is_best_effort(self):
+        # OpenRouter 500s: the run must still render full tables (ticket 18
+        # — enrichment never joins the hard-fail contract), and the fetch
+        # must have been attempted.
+        srv = _LiveServer(fail="/api/v1/models")
+        self.addCleanup(srv.stop)
+        r = self.live_run(srv)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("frontier: ", r.stdout)
+        self.assertIn("GPT-5.6 Luna", r.stdout)
+        self.assertTrue(any("/api/v1/models" in p for p in srv.seen),
+                        "OR fetch must be attempted on every live run")
+
     def test_live_renders_same_tables_as_fixture_mode(self):
         srv = _LiveServer()
         self.addCleanup(srv.stop)
@@ -717,6 +897,8 @@ class LiveAcquisition(unittest.TestCase):
         # page 1 loses its AA row and the parity assertion below fails: the
         # merge is observable from output alone. The request log then pins
         # the rest of the contract (a second page was requested, no third).
+        # The Researcher role (cap lens) renders every model; the default
+        # price lens would drop Kimi (its low grade is 1 — below floor 2).
         dummy = [json.loads(AA_ROW.format(
                      i=f"u{n}", name=f"Model {n}", slug=f"model-{n}",
                      ii=10 + n, cost=0.01 * n, spd=100 + n))
@@ -747,8 +929,8 @@ class LiveAcquisition(unittest.TestCase):
                 json.dumps({"listing": [], "submissions": {}}))
             srv = _LiveServer(td)
             self.addCleanup(srv.stop)
-            live = self.live_run(srv)
-            fix = run_cli(self.KEY, "--fixtures", td)
+            live = self.live_run(srv, "--role", "Researcher")
+            fix = run_cli(self.KEY, "--fixtures", td, "--role", "Researcher")
         self.assertEqual(live.returncode, 0, live.stderr)
         self.assertEqual(fix.returncode, 0, fix.stderr)
         self.assertEqual(live.stdout, fix.stdout)
@@ -759,10 +941,35 @@ class LiveAcquisition(unittest.TestCase):
         self.assertFalse(any("page=3" in p for p in srv.seen),
                          "AA fetcher must stop on the short page")
 
-    def test_unknown_model_degrades_to_source_only(self):
+    def test_live_or_context_joins_onto_models(self):
+        # Dataset-level assertion of the live OR join (the rendered context
+        # line is pinned in test_tui): ids resolve through the alias table
+        # ("openai/gpt-5.6-luna") or a vendor-prefix strip ("anthropic/
+        # claude-opus-5"); models without an OR row keep context None.
+        from llmratings import fetch, identity
+        srv = _LiveServer()
+        self.addCleanup(srv.stop)
+        os.environ["LLM_RATINGS_HTTP_BASE"] = srv.url()
+        os.environ["LLM_RATINGS_AA_API_KEY"] = "dummy"
+        try:
+            raw = fetch.fetch_all(None)
+        finally:
+            del os.environ["LLM_RATINGS_HTTP_BASE"]
+            del os.environ["LLM_RATINGS_AA_API_KEY"]
+        aliases = identity.load_aliases(REPO / "llmratings" / "aliases.json")
+        ds = identity.build(aliases, raw)
+        self.assertEqual(ds.models["claude-opus-5"].context_length, 200000)
+        self.assertEqual(ds.models["claude-opus-5"].modalities,
+                         "in: text, image, file; out: text")
+        self.assertEqual(ds.models["gpt-5-6-luna"].context_length, 200000)
+        self.assertIsNone(ds.models["kimi-k3"].context_length,
+                          "models without an OR row keep context None")
+
+    def test_unknown_model_absent_from_ranked_tables(self):
         # A DeepSWE model with no alias entry joins to a source-only identity
-        # (source string as name, no AA grade/price/PPI/speed) and the run
-        # completes — the spec §3 degradation, never a blocker.
+        # (no AA row → no objective-selected configuration): the run
+        # completes and the model is absent from the ranked tables (spec
+        # §3/§4, ticket 18).
         with tempfile.TemporaryDirectory() as td:
             for f in ("aa.json", "tb.json"):
                 Path(td, f).write_text(Path(FIXTURES, f).read_text())
@@ -772,9 +979,7 @@ class LiveAcquisition(unittest.TestCase):
             Path(td, "deepswe.json").write_text(json.dumps(ds))
             r = run_cli(self.KEY, "--fixtures", td)
         self.assertEqual(r.returncode, 0, r.stderr)
-        row = next(ln for ln in r.stdout.splitlines()
-                   if "brand-new-model-9000" in ln and ln.startswith("  "))
-        self.assertRegex(row, r"n/a\s+—\s+—\s+n/a\s+—\s*$")
+        self.assertNotIn("brand-new-model-9000", r.stdout)
 
 
 if __name__ == "__main__":

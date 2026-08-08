@@ -8,10 +8,14 @@ effort parenthetical; provider = AA model_creator name.
 
 DeepSWE/TB model strings map onto AA base slugs via the alias table. A rated
 model with no AA row (or whose alias resolves to nothing in the data) keeps a
-source-only identity: key "dsw:<name>", provider "—", no price, no PPI.
+source-only identity: key "dsw:<name>", provider "—", no price, no PPI — and
+no objective-selected configuration, so it never enters a role table (ticket
+18).
 
 Rating rows attach wholesale — the original source row is kept on every
-Rating; nothing is discarded.
+Rating; nothing is discarded. OpenRouter rows are enrichment only: their id
+resolves through the alias table (or a vendor-prefix strip) onto a canonical
+model, contributing context_length and modalities for the detail view.
 """
 
 import json
@@ -54,6 +58,8 @@ class Model:
     key: str            # AA base slug, or "dsw:<name>" for source-only models
     name: str
     provider: str
+    context_length: int | None = None   # OpenRouter enrichment (ticket 18)
+    modalities: str | None = None       # "in: text, image; out: text"
 
 
 @dataclass
@@ -191,4 +197,43 @@ def build(aliases, raw):
             row, agent=sf.get("agent") or None,
             date=(row.get("metadata") or {}).get("date") or None))
 
+    # OpenRouter enrichment (ticket 18, best-effort): join context_length
+    # and modalities onto canonical models for the detail view. OR ids are
+    # "vendor/model" style; the alias table already maps the known ones
+    # ("openai/gpt-5.6-luna"), the vendor-prefix strip covers the rest.
+    # Missing/malformed payloads and fields are skipped — enrichment never
+    # fails a run, and a bad field value must not crash the detail view.
+    or_doc = raw.get("or")
+    if isinstance(or_doc, dict) and isinstance(or_doc.get("data"), list):
+        for row in or_doc["data"]:
+            if not isinstance(row, dict):
+                continue
+            rid = row.get("id")
+            if not isinstance(rid, str):
+                continue
+            key = aliases.get(rid) or rid.split("/", 1)[-1]
+            m = models.get(key)
+            if m is None or m.context_length is not None:
+                continue
+            ctx = row.get("context_length")
+            if isinstance(ctx, int) and ctx > 0:
+                m.context_length = ctx
+            arch = row.get("architecture")
+            if isinstance(arch, dict):
+                m.modalities = _modalities(arch)
+
     return Dataset(models, ratings)
+
+
+def _modalities(arch):
+    """"in: text, image; out: text" from OpenRouter's architecture lists."""
+    ins = arch.get("input_modalities")
+    outs = arch.get("output_modalities")
+    ins = ins if isinstance(ins, list) else []
+    outs = outs if isinstance(outs, list) else []
+    parts = []
+    if ins:
+        parts.append("in: " + ", ".join(ins))
+    if outs:
+        parts.append("out: " + ", ".join(outs))
+    return "; ".join(parts) or None

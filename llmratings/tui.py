@@ -1,4 +1,4 @@
-"""Interactive TUI (tickets 16, 17) — a thin Textual shell over render.py.
+"""Interactive TUI (tickets 16, 17, 18) — a thin Textual shell over render.py.
 
 Ticket 16 shipped a hand-rolled ANSI TUI (termios/select, zero deps); on the
 user's terminal (cmux, full-width pane) its `"\x1b[2J\x1b[H" + "\n".join()`
@@ -10,12 +10,13 @@ stays the single source of table text (batch and TUI render identical
 lines), `Session` keeps the state machine, and the `LlmRatings` App just
 draws `Session.frame()` and routes keys into `Session.key()`.
 
-Keymap (spec §6): ←/→ or 1–5 category nav, ↑/↓ row nav, `f` capability
-filter (all → cap = 5 → cap ≥ 4, banding key = AA grade), `e` effort
-override (low → medium → high → xhigh → max → default, reset on category
-switch), Enter detail view, Esc back, q quit; Ctrl-C quits too. Textual owns
-cursor addressing, resize and scrolling; batch mode (non-tty stdin without
-the old `--interactive` flag) is untouched in __main__.
+Keymap (spec §6): ←/→ or 1–N role nav (N = roles.json length), ↑/↓ row nav,
+`f` capability filter (all → cap = 5 → cap ≥ 4, banding key = AA grade), `o`
+objective override (cap → ppi → price → role default, reset on role switch —
+ticket 18 deletes the `e` effort override: efforts now come from the active
+objective), Enter detail view, Esc back, q quit; Ctrl-C quits too. Textual
+owns cursor addressing, resize and scrolling; batch mode (non-tty stdin
+without the old `--interactive` flag) is untouched in __main__.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ import os
 import sys
 
 from . import render
-from .identity import EFFORTS
 
 try:
     from rich.text import Text
@@ -39,44 +39,51 @@ except ImportError:   # batch mode must keep working without textual
 
 FILTERS = [("all", None), ("cap = 5", 5), ("cap ≥ 4", 4)]
 
-TABLE_FOOTER = ("←/→ or 1–5 category · ↑/↓ move · f filter · e effort · "
+TABLE_FOOTER = ("←/→ or 1–N role · ↑/↓ move · f filter · o objective · "
                 "Enter detail · Esc/q quit")
+
+# The `o` cycle walks render.OBJECTIVES (cap → ppi → price) then back to
+# the role default (None). Roles load from roles.json in file order
+# (ticket 18).
+_LENS = render.OBJECTIVES
 
 
 class Session:
-    """TUI state: category, cursor, filter, effort override, open detail row.
+    """TUI state: role tab, cursor, filter, objective override, open detail
+    row.
 
     `frame()` renders the current state; `key()` applies one key. The two
     stay separate so the Textual shell is just draw → key → redraw.
     """
 
-    def __init__(self, ds, category="Chores"):
+    def __init__(self, ds, roles, role_name):
         self.ds = ds
-        self.cat = next(i for i, c in enumerate(render.CATEGORIES)
-                        if c[0] == category)
+        self.roles = roles
+        self.role_i = next(i for i, r in enumerate(roles)
+                           if r["name"] == role_name)
         self.cursor = 0
         self.filt = 0
-        self.override = None      # effort override; None = category default
+        self.obj = None       # objective override; None = role default
         self.detail_row = None    # row dict open in the detail view
         self.quit = False
         self._rows = []           # display-ordered rows of the last table
 
     @property
-    def category(self):
-        return render.CATEGORIES[self.cat]
+    def role(self):
+        return self.roles[self.role_i]
 
     @property
-    def effort(self):
-        return self.override or self.category[1]
+    def objective(self):
+        return self.obj or self.role["objective"]
 
     def frame(self):
-        name = self.category[0]
+        role = self.role
         if self.detail_row is not None:
             return (["LLM RATINGS — detail", ""]
-                    + render.detail(self.ds, self.detail_row, name)
+                    + render.detail(self.ds, self.detail_row, role,
+                                    self.objective)
                     + ["", "Esc back · q quit", render.ATTRIBUTION])
-        effort = self.effort
-        lines, self._rows = render.table(self.ds, name, effort,
+        lines, self._rows = render.table(self.ds, role, self.objective,
                                          FILTERS[self.filt][1])
         sel = [i for i, ln in enumerate(lines)
                if ln.startswith("  ") and not ln.startswith("    ")]
@@ -84,12 +91,11 @@ class Session:
             self.cursor = min(self.cursor, len(sel) - 1)
             at = sel[self.cursor]
             lines[at] = "\x1b[7m" + lines[at] + "\x1b[0m"
-        label = (f"effort {effort} (default)" if self.override is None
-                 else f"effort {effort} (override)")
-        status = (f"LLM RATINGS — {name} · {label} · "
-                  f"league: {render.AXIS_LABEL[self.category[2]]} · "
+        state = "default" if self.obj is None else "override"
+        status = (f"LLM RATINGS — {role['name']} · objective "
+                  f"{self.objective} ({state}) · "
                   f"filter: {FILTERS[self.filt][0]}")
-        # render.table already carries the column header in its lines.
+        # render.table already carries the role header + column header lines.
         return [status, ""] + lines + ["", TABLE_FOOTER, render.ATTRIBUTION]
 
     def key(self, k):
@@ -101,12 +107,13 @@ class Session:
             elif k == "esc":
                 self.detail_row = None
             elif k in ("left", "right"):
-                self._switch_category(k)
+                self._switch_role(k)
             return
         if k in ("q", "esc", "eof"):
             self.quit = True
-        elif k in ("left", "right", "1", "2", "3", "4", "5"):
-            self._switch_category(k)
+        elif k in ("left", "right") or (
+                k.isdigit() and 1 <= int(k) <= len(self.roles)):
+            self._switch_role(k)
         elif k == "up":
             self.cursor = max(0, self.cursor - 1)
         elif k == "down":
@@ -114,28 +121,26 @@ class Session:
         elif k == "f":
             self.filt = (self.filt + 1) % len(FILTERS)
             self.cursor = 0
-        elif k == "e":
-            if self.override is None:
-                self.override = EFFORTS[0]
-            else:
-                i = EFFORTS.index(self.override) + 1
-                self.override = EFFORTS[i] if i < len(EFFORTS) else None
+        elif k == "o":
+            # cap → ppi → price → role default (None); resets on role switch.
+            i = _LENS.index(self.obj) if self.obj in _LENS else -1
+            self.obj = _LENS[i + 1] if i + 1 < len(_LENS) else None
             self.cursor = 0
         elif k == "enter":
             if self._rows:
                 self.detail_row = self._rows[self.cursor]
 
-    def _switch_category(self, k):
-        """←/→ wrap around; 1–5 jump. Spec §6: the effort override resets
-        on category switch so a stale effort never carries over."""
-        n = len(render.CATEGORIES)
+    def _switch_role(self, k):
+        """←/→ wrap around; 1–N jump. Spec §6: the objective override resets
+        on role switch so a stale lens never carries over."""
+        n = len(self.roles)
         if k == "left":
-            self.cat = (self.cat - 1) % n
+            self.role_i = (self.role_i - 1) % n
         elif k == "right":
-            self.cat = (self.cat + 1) % n
+            self.role_i = (self.role_i + 1) % n
         else:
-            self.cat = int(k) - 1
-        self.override = None
+            self.role_i = int(k) - 1
+        self.obj = None
         self.cursor = 0
         self.detail_row = None
 
@@ -205,7 +210,9 @@ if _TEXTUAL:
         ticket-16 keymap as priority bindings (the scroll container would
         otherwise consume ↑/↓/←/→ once the table outgrows the viewport, and
         Textual 8 binds ctrl+c to copy on the Screen — the priority pass
-        beats both)."""
+        beats both). Digits 1–9 are bound; Session ignores any beyond the
+        roles.json count, so a role added to the file extends the keymap
+        without a code change."""
 
         BINDINGS = [
             Binding("left", "press('left')", show=False, priority=True),
@@ -213,7 +220,7 @@ if _TEXTUAL:
             Binding("up", "press('up')", show=False, priority=True),
             Binding("down", "press('down')", show=False, priority=True),
             Binding("f", "press('f')", show=False, priority=True),
-            Binding("e", "press('e')", show=False, priority=True),
+            Binding("o", "press('o')", show=False, priority=True),
             Binding("enter", "press('enter')", show=False, priority=True),
             Binding("escape", "press('esc')", show=False, priority=True),
             Binding("q", "press('q')", show=False, priority=True),
@@ -223,11 +230,15 @@ if _TEXTUAL:
             Binding("3", "press('3')", show=False, priority=True),
             Binding("4", "press('4')", show=False, priority=True),
             Binding("5", "press('5')", show=False, priority=True),
+            Binding("6", "press('6')", show=False, priority=True),
+            Binding("7", "press('7')", show=False, priority=True),
+            Binding("8", "press('8')", show=False, priority=True),
+            Binding("9", "press('9')", show=False, priority=True),
         ]
 
-        def __init__(self, ds, category="Chores"):
+        def __init__(self, ds, roles, role_name="Chores"):
             super().__init__(driver_class=_EofDriver)
-            self.sess = Session(ds, category)
+            self.sess = Session(ds, roles, role_name)
 
         def compose(self) -> ComposeResult:
             with VerticalScroll(id="view"):
@@ -269,7 +280,7 @@ def available() -> bool:
     return _TEXTUAL
 
 
-def run(ds, category="Chores") -> int:
+def run(ds, roles, role_name) -> int:
     """Run the interactive session; returns 0 — every mode has an exit key,
     and EOF/Ctrl-C quit cleanly. A missing textual dependency fails with a
     clear setup error instead of a traceback."""
@@ -277,5 +288,5 @@ def run(ds, category="Chores") -> int:
         print("error: textual is not installed — run `make deps`",
               file=sys.stderr)
         return 1
-    LlmRatings(ds, category).run()
+    LlmRatings(ds, roles, role_name).run()
     return 0

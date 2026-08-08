@@ -1,15 +1,18 @@
 # LLM Ratings — domain glossary
 
-- **model** — a canonical AI model identity, anchored to an Artificial Analysis row: stable UUID as key, AA `name` as display name. Source strings (DeepSWE, Terminal-Bench) map onto it via an alias table.
+- **model** — a canonical AI model identity, anchored to an Artificial Analysis row: AA base slug as key (the API's UUID is per-effort-variant, not stable across a model's configurations), AA `name` as display name. Source strings (DeepSWE, Terminal-Bench) map onto it via an alias table.
 - **provider** — the model's creator as listed by Artificial Analysis; a display/grouping attribute, not a pricing dimension.
 - **rating** — a published benchmark score from a chosen source. A model carries one rating per (source × reasoning effort); Terminal-Bench rows are agent×model pairs and collapse to the best agent per (model × effort) for display.
-- **reasoning effort** — the effort setting a rating was produced at (low … max); DeepSWE and AA both key ratings and prices per effort. Each category fixes an effort: Chores→low, Everyday→medium, Deliberate→high, Deep→max, Best Value→high.
+- **reasoning effort** — the effort setting a rating was produced at (low … max); DeepSWE and AA both key ratings and prices per effort. No fixed effort per role: a role's objective selects each model's best effort.
 - **price** — the money number in tables: Artificial Analysis's per-task cost of the model's effort variant (PPI denominator, frontier x, price-tier input — one consistent basis). AA list price per effort variant appears in the row detail view; no other price source is in scope.
 - **frontier** — the recommendation set: a (model × effort) configuration whose AA index no other configuration beats at equal-or-lower per-task cost (Pareto upper envelope over every model × effort). Marked `*` in tables; the frontier path line shows the cross-effort ladder.
 - **dominated** — a configuration with a strict replacement: some other configuration has ≥ rating at ≤ cost (one side strict). Tables annotate dominated rows with their best replacement ("→ X: +N pts, save $Y"; same-effort replacements preferred, cross-effort fallback — e.g. Sol max → Sol medium, same rating, save $0.33).
+- **role** — a configurable stereotype of an agent task; the top-level tab in the UI. Five roles ship by default (Chores, Generic, Researcher, Coder, Orchestrator); the list lives in a checked-in config file. A role defines an objective, a description, and capacity guidance; it replaces the earlier notion of category.
+- **objective** — the per-role rule that selects each model's best reasoning effort: `cap` (highest AA index, lower price on tie), `ppi` (highest price-per-intelligence, higher AA index on tie), `price` (cheapest configuration above the role's capability-tier floor; higher AA index, then higher speed tier, on tie). Each table row is the model at its objective-selected configuration.
+- **alternative** — a cheaper configuration offered in the detail view: price below the row's price and AA index within 5 points below the row's AA index, top 3, sorted by price. One constant, no per-role config.
 - **price tier** — a relative bucket of price, 1 = cheapest … 5 = most expensive, recomputed from the priced set on each refresh.
-- **price-per-intelligence** — a source rating divided by Artificial Analysis's per-task cost at the category's effort; the value tier's raw number, per (model × source × category). No AA price → no PPI.
+- **price-per-intelligence** — the AA Intelligence Index divided by Artificial Analysis's per-task cost at the configuration's reasoning effort; the value tier's raw number, one per row on an AA-only basis (per-source PPI columns rejected — ticket 14). No AA price → no PPI.
 - **capability tier** — relative grade (1–5, 5 = best) of a model's rating within its source's rated set at a given effort; computed per source, never blended across sources.
-- **value tier** — relative grade (1–5, 5 = best) of price-per-intelligence within its source's set at a given effort.
+- **value tier** — relative grade (1–5, 5 = best) of price-per-intelligence within the set at a given effort.
 - **speed tier** — relative grade (1–5, 5 = best) of AA median output tokens/s at a given effort.
 - **cost** — benchmark-run expenditure (DeepSWE's Modal cost, Terminal-Bench's per-run cost); a different basis from price, never mixed with it.
