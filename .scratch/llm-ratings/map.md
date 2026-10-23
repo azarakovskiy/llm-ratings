@@ -1,8 +1,10 @@
-# LLM Ratings: build-ready spec for the model-advice PoC
+# LLM Ratings: per-role model & effort advice with omp config output
 
 ## Destination
 
-A build-ready spec for a PoC CLI that prints per-role model ranking tables — model, rating, price, price-per-intelligence, tier — fed from public LLM benchmark sources (DeepSWE, Terminal-Bench v2.1, artificialanalysis.ai; OpenRouter enrichment, ticket 18). The map is done when five decisions are locked: sources & acquisition, model identity & pricing, stereotypical categories (reshaped into role tabs, ticket 18), tiering, ranking & output. A build session then executes the spec.
+An amended `spec.md` plus ready-for-agent build tickets for per-role model × effort advice: each role ranks configurations on its own AA index, and the tool prints an omp `modelRoles` + `task.agentModelOverrides` snippet as a diff against `~/.omp/agent/config.yml`, every pick carrying its numbers, fetch date and source URL. The map is done when the spec is amended and every build slice is a ticket; later sessions build one ticket each.
+
+_Redrawn 2026-10-19. The first destination (a build-ready PoC spec) was reached at [10 Write the PoC spec](issues/10-write-poc-spec.md) and built through ticket 18. Tickets 01–18 are the walked route._
 
 ## Notes
 
@@ -11,6 +13,13 @@ A build-ready spec for a PoC CLI that prints per-role model ranking tables — m
 - Sources overlap but each adds unique coverage (05); a model may rate differently per source — disagreement is meaning for per-model per-tier semantics (07/08), not noise to average away.
 - Interaction (09, supersedes the earlier static-tables lean): an interactive TUI — category nav, capability filter, effort override, Enter drill-down. The output table is structured around the frontier: ★ frontier section (AA vs $/task over every model × effort) then ✗ dominated rows with best-replacement arrows; ΔAA/Δ$ vs the row above carry near-ties. Chart renderings are out (user rejected).
 - User's anchor example: DeepSeek Flash ≈ ChatGPT Luna 5.6 at high/extra-high effort (even Max) but far cheaper — yet for the best reasoning the expensive model still wins.
+- Revamp (2026-10-19): motivated by the omp model-setup handoff, [assets/handoff-model-setup-artificial-analysis.md](assets/handoff-model-setup-artificial-analysis.md) (its four questions, omp workloads and current config). Framing decisions live in [19 Settled decisions for per-role advice and omp config output](issues/19-settled-decisions-role-advice.md).
+- Skills: HITL tickets use grilling + domain-modeling, the prototype ticket uses prototype, and AFK research tickets use research. The glossary is `CONTEXT.md`. Research findings land in `assets/NN-<slug>.md` (repo convention, as for 01–05), linked from the ticket.
+- Facts checked while charting (2026-10-19):
+  - AA free-tier rows carry per-effort-variant latency: median tok/s, TTFT, time to first answer token and e2e, from the live-fetched `fixtures/main/aa.json`. Latency varies sharply by effort; for example, Claude Opus 5 TTFT is 2.75 s at low and 52.5 s at max.
+  - The AA free tier has no modalities, so vision capability comes from OR `/api/v1/models` `input_modalities`, which ticket 18 already fetches.
+  - No OpenRouter key exists in the env, shell rc files or omp credentials; the omp store holds `anthropic` only.
+  - `~/.omp/agent/config.yml` has drifted from the handoff: `smol` is `haiku-5-5:medium`, and `task` is `sonnet-5-5:auto`.
 
 ## Decisions so far
 
@@ -35,11 +44,15 @@ A build-ready spec for a PoC CLI that prints per-role model ranking tables — m
 
 - [18 Role tabs with per-role objectives](issues/18-role-tabs-objectives.md) — grilling verdict (user-confirmed 2026-08-08): the five categories become configurable role tabs (Chores/Generic/Researcher/Coder/Orchestrator in a checked-in `roles.json`; each role = description + capacity guidance incl. speed + objective + floor, default AA grade 2); three objectives (`cap` / `ppi` / `price`-with-floor) select each model's best reasoning effort — one row per model at its objective-selected configuration, per-row Effort; `o` objective override cycles cap→ppi→price→role default with reset on role switch, `e` effort override deleted; ★ frontier / ✗ dominated structure kept, sort by active objective; detail view gains up-to-3 cheaper near-equal alternatives (5-pt AA band, price-sorted) and OpenRouter context_length + modalities (best-effort `GET /models`, survey `assets/05-openrouter-source-survey.md` — no source replaced: no per-effort ratings, no per-task cost, speed key-gated); `--category` → `--role`, unknown name exit 2; spec §2/§4/§6/§7 + user stories amended, ADR 0002, CONTEXT.md updated. Shipped `c21e146` on master, 76/76 tests green, reviewed (spec/standards axes).
 
+- [19 Settled decisions for per-role advice and omp config output](issues/19-settled-decisions-role-advice.md): user-confirmed 2026-10-19. Design first, then build one ticket per session. Revamp in place, with new tickets from 19. Generic roles plus a separate omp mapping. Each role sets its AA index (Intelligence, Coding or Agentic). The snippet is `modelRoles` + `task.agentModelOverrides` as a diff against `config.yml`, with evidence, and the tool never writes the file. Tables show all providers, while the usable-providers list (default anthropic, openai) limits only the snippet. OR `rankings-daily` gives a display-only "30-day OR token share" column; 24 supersedes 06's usage-proxy part.
+- [20 OpenRouter permaslug to canonical model join](issues/20-openrouter-usage-join.md): public `/models` exposes the permaslug as `canonical_slug` (variant-free, not derivable from `id`), so the join needs a `canonical_slug → id` hop before the existing alias step; sum tokens per model across `:variant`s, dated snapshots and days; no effort split; denominator includes `other`; 30-day top-50 presence NOT VERIFIED (no key).
+- [25 AA model x effort row to omp selector](issues/25-omp-selector-translation.md): AA's five efforts map 1:1 to `:low`…`:max` (read the effort from the AA name, since an unsuffixed slug is the top variant); omp's `:auto` is a per-prompt classifier with no AA score; slug→id needs canonical lookup (OpenAI keeps dots, Anthropic uses hyphens, resolver tolerates both); model-kind roles take no suffix; `agentModelOverrides` takes `@role[:level]` or a concrete selector; `models.db` `int`/`tps` are not shown to be AA.
+
 ## Not yet specified
 
 <!-- fog: in-scope but not sharp enough to ticket; graduates as the frontier advances -->
 
-- (none — the vision-tag sourcing fog was moot: 07 makes vision a capability tag, not a category, and 09's table has no vision column; cleared at 09's resolution.)
+- Latency in advice: which AA latency figure shows (TTFT, time to first answer token or e2e), and whether any role's objective weighs it. This sharpens once [23 Objective per role](issues/23-objective-per-role.md) settles.
 
 
 
@@ -47,9 +60,10 @@ A build-ready spec for a PoC CLI that prints per-role model ranking tables — m
 
 <!-- work ruled beyond the destination; closed, never graduates -->
 
-- Building the PoC itself — the destination is the spec; a build session executes it.
+- Building the advice features: later sessions build them, one ticket each ([19 Settled decisions](issues/19-settled-decisions-role-advice.md), decision 1).
 - Non-CLI surfaces (web UI, dashboards) — CLI tables per the charting decision.
-- Integrating advice into OMP or any harness — the tool advises; it doesn't route.
+- Integrating advice into OMP or any harness: the tool never writes harness config or routes requests. It prints a config snippet only ([19 Settled decisions](issues/19-settled-decisions-role-advice.md), decision 5).
+- Non-model omp settings (`task.maxRuntimeMs` and other harness settings): the snippet covers `modelRoles` + `task.agentModelOverrides` only (user-approved 2026-10-19).
 - Running benchmarks or inference — consumes published ratings only.
 - SWE-Atlas-QnA as a ratings source — ruled out in [05 Choose sources](issues/05-choose-sources.md); not part of the destination's source set.
 - Provider-level pricing (OpenRouter vs direct) — ruled out in [06 Model identity & pricing](issues/06-model-identity-and-pricing.md): AA free tier carries none and adding a pricing source would redraw the decision-05 set; AA list price is the price.
