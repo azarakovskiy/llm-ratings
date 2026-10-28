@@ -1,6 +1,6 @@
 # Mainstream coding assistants — native roles and model-selection profiles
 
-Surveyed **2026-10-28** from official Anthropic, OpenAI, Cursor, GitHub and Microsoft documentation. All linked sources below were accessed on that date. This resolves the factual survey in issue 27; it does not select final LLM Ratings role names, models, benchmarks, provider filters, or configuration exports.
+Surveyed **2026-10-28** from official Anthropic, OpenAI, Cursor, GitHub and Microsoft documentation. All linked sources below were accessed on that date. This resolves the factual survey “Survey task roles in mainstream coding assistants”; it does not select final LLM Ratings role names, models, benchmarks, provider filters, or configuration exports.
 
 ## Answer and classification
 
