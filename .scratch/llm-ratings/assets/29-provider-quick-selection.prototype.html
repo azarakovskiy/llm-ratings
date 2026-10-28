@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Provider quick selection — throwaway workflow prototype</title>
+<style>
+  :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; --accent: #3374d9; }
+  body { max-width: 1040px; margin: 32px auto; padding: 0 20px 36px; }
+  h1 { font-size: 27px; margin-bottom: 8px; } h2 { font-size: 19px; margin: 0 0 12px; }
+  p { margin: 8px 0 16px; } small, .muted { opacity: .76; }
+  section { border: 1px solid #8886; border-radius: 8px; padding: 18px; margin: 20px 0; }
+  button, select { font: inherit; padding: 7px 12px; border: 1px solid #8888; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); } button:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"], button[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 -3px var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 9px 0 18px; align-items: center; }
+  .label { font-weight: 650; margin-top: 12px; }
+  dl { display: grid; grid-template-columns: 140px 1fr; gap: 5px 18px; margin: 0; } dt { opacity: .75; } dd { margin: 0; font-weight: 550; }
+  .scroll { overflow-x: auto; } table { border-collapse: collapse; width: 100%; white-space: nowrap; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #8884; }
+  th { font-size: 13px; opacity: .8; } tr.selected { background: #3374d91c; }
+  #empty { border-left: 4px solid var(--accent); padding: 10px 16px; }
+  #steps { display: grid; gap: 8px; } #steps button { text-align: left; }
+  #change { min-height: 1.5em; color: var(--accent); }
+  a { color: var(--accent); } .tag { font-size: 12px; letter-spacing: .08em; font-weight: 700; }
+</style>
+<header>
+  <span class="tag">THROWAWAY · DECISION DEMO · NOT A WEB-APP PROPOSAL</span>
+  <h1>Full model table and provider picks</h1>
+  <p>The full model table is the default view. Provider picks show up to two distinct models per creator, each at its active role-objective-selected effort. Picks follow the objective, even when a model is dominated. Eligibility and capability filters apply before either view.</p>
+  <p class="muted">Data: five models from the recorded fixture, not live recommendations. Role names and Intelligence-only objectives are temporary baseline choices, pending separate decisions. Fixed shortcuts: OpenAI, Anthropic, Google, DeepSeek and xAI. Google, DeepSeek and xAI have no rows in this small fixture; that is not a real-world coverage claim.</p>
+</header>
+<section aria-labelledby="state-heading">
+  <h2 id="state-heading">Current state</h2>
+  <dl id="state"></dl>
+  <p id="change" aria-live="polite">Ready. No provider constraint.</p>
+</section>
+<section aria-labelledby="actions-heading">
+  <h2 id="actions-heading">Free play</h2>
+  <div class="label">View <small>— proposed TUI: <kbd>v</kbd> switches views</small></div>
+  <div class="controls" id="modes"></div>
+  <div class="label">Role <small>— temporary names</small></div>
+  <div class="controls" id="roles"></div>
+  <div class="label">Provider <small>— model creator, not API gateway; proposed TUI: <kbd>p</kbd> opens the chooser</small></div>
+  <div class="controls" id="providers"></div>
+  <label for="creator-menu">All creators, including those without a shortcut</label>
+  <select id="creator-menu">
+    <option value="all">All providers</option>
+    <option>Anthropic</option><option>DeepSeek</option><option>Google</option>
+    <option>Kimi</option><option>OpenAI</option><option>xAI</option>
+  </select>
+  <div class="controls">
+    <button id="grade" type="button">AA grade ≥ 4</button>
+    <button id="previous" type="button">↑ Previous model</button>
+    <button id="next" type="button">↓ Next model</button>
+    <button id="reset" type="button">Reset demo</button>
+  </div>
+  <small>Keep exactly one provider or All providers, plus the capability filter, across role and view changes. Reset the row cursor after role, provider, view or filter changes. “All providers” removes only the provider constraint. Clear the capability filter separately. In this HTML demo, <kbd>p</kbd> focuses the full menu and <kbd>v</kbd> switches views when focus is not on a form control. Existing TUI role shortcuts stay unchanged; this is not a TUI implementation. Nothing is saved.</small>
+</section>
+<section aria-labelledby="result-heading">
+  <h2 id="result-heading">Result</h2>
+  <p id="explanation"></p>
+  <div class="scroll">
+    <table id="results">
+      <thead><tr><th>Model / pick</th><th>Effort</th><th>Creator</th><th>AA index</th><th>$/task</th><th>AA grade</th><th id="status-heading">Global comparison</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="empty" hidden>
+    <strong>No eligible models for this selection in the fixture snapshot.</strong>
+    <p>The provider is still selected. No other creator is substituted and no rule is relaxed.</p>
+    <button id="empty-all" type="button">All providers</button>
+    <button id="empty-grade" type="button">Clear capability filter</button>
+  </div>
+  <p class="muted" id="comparison-note"></p>
+</section>
+<section aria-labelledby="walkthrough-heading">
+  <h2 id="walkthrough-heading">Guided walkthroughs</h2>
+  <div class="controls" id="scenarios" role="group" aria-label="Walkthroughs"></div>
+  <div id="walkthrough-panel"><p id="scenario-description"></p><div id="steps"></div></div>
+</section>
+<footer class="muted">
+  <small>Recorded source: <code>.scratch/llm-ratings/fixtures/main/aa.json</code>. Selected configurations and grades retain the fixture CLI baseline; comparison status is calculated here from all 21 recorded effort configurations of these five models. Ratings and prices: <a href="https://artificialanalysis.ai">Artificial Analysis</a>. This self-contained, throwaway workflow prototype is not a web-app proposal, live recommendation service or production integration. It has no dependencies, persistence or live data. Roles and Intelligence-only objectives are temporary. The full frontier path, replacement arrows and detail screen are not implemented; their comparisons must use the same active creator scope.</small>
+</footer>
+<script>
+// Recorded objective-selected configurations: effort, AA Intelligence Index,
+// AA $/task and unchanged per-effort AA grade. No live API or persistence.
+const models = [
+  {name: 'GPT-5.6 Luna', provider: 'OpenAI', price: ['medium',38.1,.0113,2], ppi: ['low',33.3,.0088,1], cap: ['max',51.2,.0473,2],
+    configurations: [['low',33.3,.0088],['medium',38.1,.0113],['high',46.1,.0216],['xhigh',49.1,.0317],['max',51.2,.0473]]},
+  {name: 'GPT-5.6 Sol', provider: 'OpenAI', price: ['low',49.4,.245,4], ppi: ['low',49.4,.245,4], cap: ['max',58.9,1.2325,4],
+    configurations: [['low',49.4,.245],['medium',53.6,.3902],['high',55.9,.5486],['xhigh',57.7,.8325],['max',58.9,1.2325]]},
+  {name: 'GPT-5.5', provider: 'OpenAI', price: ['low',43.5,.26,2], ppi: ['low',43.5,.26,2], cap: ['xhigh',54.8,1.1748,3],
+    configurations: [['low',43.5,.26],['medium',50.4,.4954],['high',53.1,.801],['xhigh',54.8,1.1748]]},
+  {name: 'Claude Opus 5', provider: 'Anthropic', price: ['low',50.6,.4263,5], ppi: ['low',50.6,.4263,5], cap: ['max',60.7,2.3365,5],
+    configurations: [['low',50.6,.4263],['medium',56.3,.7224],['high',58.9,1.2259],['xhigh',60.1,1.8021],['max',60.7,2.3365]]},
+  {name: 'Kimi K3', provider: 'Kimi', price: ['low',46.6,.2429,3], ppi: ['low',46.6,.2429,3], cap: ['max',57.1,.8552,3],
+    configurations: [['low',46.6,.2429],['max',57.1,.8552]]}
+];
+const comparisonPoints = models.flatMap(model => model.configurations.map(([effort,aa,price]) => ({name: model.name, provider: model.provider, effort, aa, price})));
+const roles = {Chores: 'price', Generic: 'ppi', Researcher: 'cap', Coder: 'cap', Orchestrator: 'ppi'};
+const objectiveNames = {price: 'Cheapest above the role floor', ppi: 'Highest intelligence per dollar', cap: 'Highest AA Intelligence Index'};
+const modeNames = {filter: 'Filter the model table', picks: 'Top two models per provider'};
+const initialState = () => ({mode: 'filter', role: 'Coder', provider: 'all', minGrade: 0, cursor: 0});
+function objectiveOrder(a, b, objective) {
+  if (objective === 'cap') return b.aa - a.aa || a.price - b.price;
+  if (objective === 'ppi') return b.aa / b.price - a.aa / a.price || b.aa - a.aa;
+  return a.price - b.price || b.aa - a.aa;
+}
+function activeComparisonPoints(state) {
+  // Advisory points never use the role floor or capability filter.
+  return comparisonPoints.filter(point => state.provider === 'all' || point.provider === state.provider);
+}
+function comparisonScope(state) { return state.provider === 'all' ? 'Global (recorded fixture)' : `${state.provider} only`; }
+function statusLabel(row, state) {
+  return row.frontier ? (state.provider === 'all' ? 'Global frontier' : `${state.provider} frontier`) : `Dominated by ${row.dominator.name} (${row.dominator.effort})`;
+}
+function visibleRows(state) {
+  const objective = roles[state.role];
+  const points = activeComparisonPoints(state);
+  const candidates = models.map(model => {
+    const [effort, aa, price, grade] = model[objective];
+    // ponytail: scan the fixed 21-point fixture; no production index is needed.
+    const dominator = points.find(point => point.aa >= aa && point.price <= price && (point.aa > aa || point.price < price));
+    return {name: model.name, provider: model.provider, effort, aa, price, grade, frontier: !dominator, dominator};
+  }).filter(row => (state.provider === 'all' || row.provider === state.provider) && row.grade >= state.minGrade);
+  candidates.sort((a, b) => objectiveOrder(a, b, objective));
+  if (state.mode === 'picks') {
+    const counts = new Map();
+    return candidates.filter(row => {
+      row.pick = (counts.get(row.provider) || 0) + 1;
+      counts.set(row.provider, row.pick);
+      return row.pick <= 2;
+    }).sort((a, b) => a.provider.localeCompare(b.provider) || objectiveOrder(a, b, objective));
+  }
+  return candidates.sort((a, b) => Number(b.frontier) - Number(a.frontier) || objectiveOrder(a, b, objective));
+}
+function reduce(state, action) {
+  if (action.kind === 'reset') return initialState();
+  const next = {...state};
+  if (action.kind === 'mode') next.mode = action.value;
+  if (action.kind === 'role') next.role = action.value;
+  if (action.kind === 'provider') next.provider = action.value;
+  if (action.kind === 'grade') next.minGrade = action.value;
+  next.cursor = action.kind === 'move' ? state.cursor + action.value : 0;
+  next.cursor = Math.max(0, Math.min(next.cursor, visibleRows(next).length - 1));
+  return next;
+}
+</script>
+<script>
+// Thin throwaway page shell. The workflow functions above do not touch the DOM.
+let state = initialState();
+let scenarioIndex = 0;
+let stepIndex = 0;
+const byId = id => document.getElementById(id);
+const action = (kind, value) => ({kind, value});
+const scenarios = [
+  {name: 'Table vs top two', description: 'Coder has three OpenAI candidates. With OpenAI selected, the full table places provider-frontier Sol max and Luna max before dominated GPT-5.5 xhigh. Provider picks instead follow the role objective: Sol max and GPT-5.5 xhigh, two distinct models. The lower-ranked frontier model does not displace the runner-up.', steps: [
+    ['Show the full model table', action('mode','filter')], ['Choose OpenAI', action('provider','OpenAI')], ['Select the next OpenAI model', action('move',1)], ['Show two distinct models per provider', action('mode','picks')], ['Compare every provider shortlist', action('provider','all')]]},
+  {name: 'Provider constraint', description: 'Start in Coder with All providers: Sol max is globally dominated by Claude Opus 5 high, an effort not shown as a selected row. Choose OpenAI: that comparator is excluded, so Sol max becomes provider-frontier. The top two stay Sol max and GPT-5.5 xhigh. Return to All providers: Sol max is globally dominated again. Grades do not change.', steps: [
+    ['Constrain Coder to OpenAI', action('provider','OpenAI')], ['Show objective-first picks: Sol max and GPT-5.5 xhigh', action('mode','picks')], ['All providers: restore global comparisons', action('provider','all')]]},
+  {name: 'Switch roles', description: 'Keep OpenAI selected while moving from Coder to Chores to Generic. Watch the objective and effort change, without silently leaving your provider.', steps: [
+    ['Choose OpenAI', action('provider','OpenAI')], ['Switch to Chores', action('role','Chores')], ['Switch to Generic', action('role','Generic')], ['Remove only the provider constraint', action('provider','all')]]},
+  {name: 'Empty intersection', description: 'Kimi is present in the snapshot, but its selected configuration has AA grade 3. A grade ≥ 4 filter makes the intersection empty. Keep that state visible and recover explicitly.', steps: [
+    ['Choose Kimi', action('provider','Kimi')], ['Require AA grade ≥ 4', action('grade',4)], ['Switch role: retain both constraints', action('role','Chores')], ['Remove only the provider constraint', action('provider','all')], ['Clear the capability filter', action('grade',0)]]},
+  {name: 'Unpinned creator', description: 'Kimi has no fixed shortcut, but remains reachable through the All creators menu. The menu and shortcuts change the same single provider constraint. Its one eligible model produces one pick, with no substitute runner-up.', steps: [
+    ['Select Kimi from the full creator list', action('provider','Kimi')], ['Show the single available provider pick', action('mode','picks')], ['Switch to Generic', action('role','Generic')], ['Return to all providers', action('provider','all')]]}
+];
+function button(label, selected, handler) {
+  const element = document.createElement('button');
+  element.type = 'button'; element.textContent = label;
+  element.setAttribute('aria-pressed', String(selected)); element.onclick = handler;
+  return element;
+}
+function dispatch(event, message) { state = reduce(state,event); byId('change').textContent = message; render(); }
+function render() {
+  const rows = visibleRows(state);
+  const selected = rows[state.cursor];
+  const fields = [
+    ['View',modeNames[state.mode]], ['Role',state.role], ['Objective',objectiveNames[roles[state.role]]],
+    ['Provider',state.provider === 'all' ? 'All providers' : state.provider], ['Capability filter',state.minGrade ? 'AA grade ≥ 4' : 'All grades'],
+    ['Comparison scope',`${comparisonScope(state)} · ${activeComparisonPoints(state).length} effort configurations; no grade filter or role floor`],
+    ['Visible models',String(rows.length)], ['Row cursor',rows.length ? `${state.cursor + 1} of ${rows.length}` : 'None'],
+    ['Selected model',selected ? `${selected.name} · ${selected.effort}` : 'None — empty intersection'],
+    ['Selected status',selected ? statusLabel(selected,state) : 'None — empty intersection']
+  ];
+  byId('state').replaceChildren(...fields.flatMap(([label,value]) => {
+    const term = document.createElement('dt'), definition = document.createElement('dd');
+    term.textContent = label; definition.textContent = value; return [term,definition];
+  }));
+  byId('modes').replaceChildren(...Object.entries(modeNames).map(([value,label]) => button(label,state.mode === value,() => dispatch(action('mode',value),label))));
+  byId('roles').replaceChildren(...Object.keys(roles).map(value => button(value,state.role === value,() => dispatch(action('role',value),`Role changed to ${value}; provider retained.`))));
+  byId('providers').replaceChildren(...['all','OpenAI','Anthropic','Google','DeepSeek','xAI'].map(value => button(value === 'all' ? 'All providers' : value,state.provider === value,() => dispatch(action('provider',value),value === 'all' ? 'Provider constraint removed; other filters retained.' : `Provider selected: ${value}.`))));
+  byId('creator-menu').value = state.provider;
+  byId('grade').setAttribute('aria-pressed',String(state.minGrade > 0));
+  byId('grade').textContent = state.minGrade ? 'Clear capability filter (AA grade ≥ 4)' : 'Require AA grade ≥ 4';
+  byId('explanation').textContent = state.mode === 'filter' ? 'All eligible models in the active creator scope. Frontier models first, then dominated models; each section follows the active role objective.' : 'Up to two distinct eligible models per creator, grouped by creator at their objective-selected efforts. Primary and runner-up follow the active role objective, even when dominated. One eligible model gives one pick; zero gives no pick. No fallback or relaxed filter.';
+  byId('status-heading').textContent = `${comparisonScope(state)} comparison`;
+  byId('comparison-note').textContent = `Frontier and advisory scope: ${comparisonScope(state)}. Compare AA Intelligence Index (higher is better) and $/task (lower is better) across all recorded efforts in this scope, including configurations not shown in the table. A dominator is no worse on either measure and strictly better on at least one. The capability filter and role floor do not remove comparison points; grades stay unchanged. All providers clears only the provider constraint; clear the capability filter separately.`;
+  byId('rows').replaceChildren(...rows.map((row,index) => {
+    const tr = document.createElement('tr'); if (index === state.cursor) tr.className = 'selected';
+    for (const value of [state.mode === 'picks' ? `${row.pick === 1 ? 'Primary' : 'Runner-up'} · ${row.name}` : row.name,row.effort,row.provider,row.aa.toFixed(1),'$'+row.price.toFixed(4),row.grade,statusLabel(row,state)]) {
+      const td = document.createElement('td'); td.textContent = value; tr.append(td);
+    }
+    return tr;
+  }));
+  byId('results').hidden = rows.length === 0; byId('empty').hidden = rows.length !== 0;
+  byId('empty-all').disabled = state.provider === 'all'; byId('empty-grade').disabled = state.minGrade === 0;
+  byId('previous').disabled = !rows.length || state.cursor === 0; byId('next').disabled = !rows.length || state.cursor === rows.length - 1;
+  byId('scenarios').replaceChildren(...scenarios.map((scenario,index) => {
+    const tab = button(scenario.name,index === scenarioIndex,() => {
+      scenarioIndex = index; stepIndex = 0; state = initialState(); byId('change').textContent = 'Walkthrough reset to Coder / all providers / all grades.'; render();
+    });
+    tab.id = `scenario-${index}`; tab.setAttribute('aria-controls','walkthrough-panel');
+    return tab;
+  }));
+  byId('walkthrough-panel').setAttribute('aria-labelledby',`scenario-${scenarioIndex}`);
+  const scenario = scenarios[scenarioIndex]; byId('scenario-description').textContent = scenario.description;
+  byId('steps').replaceChildren(...scenario.steps.map(([label,event],index) => {
+    const step = button(`${index < stepIndex ? '✓' : index + 1}. ${label}`,false,() => {stepIndex++; dispatch(event,label);});
+    step.disabled = index !== stepIndex; return step;
+  }));
+}
+byId('creator-menu').onchange = event => dispatch(action('provider',event.target.value),`Provider selected: ${event.target.value}.`);
+byId('grade').onclick = () => dispatch(action('grade',state.minGrade ? 0 : 4),'Capability filter changed; provider retained.');
+byId('previous').onclick = () => dispatch(action('move',-1),'Previous model selected.');
+byId('next').onclick = () => dispatch(action('move',1),'Next model selected.');
+byId('reset').onclick = () => {stepIndex = 0; dispatch(action('reset'),'Demo reset.');};
+byId('empty-all').onclick = () => dispatch(action('provider','all'),'Provider constraint removed; capability filter retained.');
+byId('empty-grade').onclick = () => dispatch(action('grade',0),'Capability filter removed; provider retained.');
+document.addEventListener('keydown', event => {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.target.isContentEditable || event.target.closest('input, textarea, select')) return;
+  if (event.key.toLowerCase() === 'p') { event.preventDefault(); byId('creator-menu').focus(); }
+  if (event.key.toLowerCase() === 'v') { event.preventDefault(); dispatch(action('mode',state.mode === 'filter' ? 'picks' : 'filter'),'View changed; provider and capability filter retained.'); }
+});
+render();
+</script>
+</html>
