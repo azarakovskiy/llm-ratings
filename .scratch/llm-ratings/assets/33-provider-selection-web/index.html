@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+Throwaway visual question: Which hierarchy makes trustworthy model comparison easy to scan?
+Three variants on one route: ?variant=A Focus desk, ?variant=B Comparison canvas,
+?variant=C Provider lens. This is not a product implementation or live model advice.
+Run: python3 -m http.server 4186 --bind 127.0.0.1 --directory /tmp/llm-ratings-provider-web-20261030/.scratch/llm-ratings/assets/33-provider-selection-web
+Open http://127.0.0.1:4186/?variant=A or open this file directly. No build or dependencies.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Model advice · LLM Ratings preview</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to model comparison</a>
+  <div id="app"></div>
+  <dialog id="model-dialog" class="model-dialog" aria-labelledby="model-dialog-title"></dialog>
+  <dialog id="policy-dialog" class="support-dialog" aria-labelledby="policy-dialog-title"></dialog>
+  <dialog id="preview-dialog" class="support-dialog preview-dialog" aria-labelledby="preview-dialog-title"></dialog>
+  <nav id="prototype-switcher" class="prototype-switcher" aria-label="Prototype variants" hidden></nav>
+  <noscript>This read-only model comparison preview needs JavaScript. All data is included locally.</noscript>
+  <script src="data.js"></script>
+  <script src="policy.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
