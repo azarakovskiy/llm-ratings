@@ -1,4 +1,4 @@
-# Fixtures — main and runtime source/selection contract (tickets 11–18, 34–35)
+# Fixtures — main and runtime source/selection contract (tickets 11–18, 34–36)
 
 Saved source payloads, curated to a small subset and supplemented with
 synthetic rows, served by the CLI's `--fixtures` mode (the spec's
@@ -229,9 +229,10 @@ instead an explicit **unavailable objective**, not a malformed profile.
 Intelligence supports all three objectives. Coding/Agentic support Highest
 capability only. An area-index Best value or Lowest qualifying price override
 remains selected and unavailable until changed: no fallback objective, index
-switch or invented denominator. Existing role/objective/capability-filter/
-detail navigation uses the shared policy; this ticket adds no provider
-controls or web interface.
+switch or invented denominator. Existing terminal navigation and batch output
+consume the shared session/query path. Provider selection and both projections
+are available to UI-independent consumers; this ticket adds no terminal
+provider controls or browser interface.
 
 ## Eligibility, effort and exact objective order
 
@@ -264,8 +265,9 @@ Coding/Agentic task cost, price tie, value/price objective or cost-based advice.
 Source-only and other included models without a qualifying configuration
 stay reachable as **unranked**, with specific reasons and independent source
 evidence. An empty eligible set shows **No qualifying configuration** with
-the role and active constraints; it does not silently relax them. A later
-capability display exclusion is separate from missing measurements.
+the role, provider, objective and active constraints; it does not silently relax
+them. A later capability display exclusion is separate from missing measurements
+and retains the objective-selected configuration and its display-filter reason.
 
 ## Grades, floor and Intelligence advice
 
@@ -275,7 +277,7 @@ all efforts and the full catalog, including models outside recommendation
 inclusion and scores without an eligible cost. Compute this population before
 objective eligibility, per-model effort selection or capability display
 filtering. Do not grade per effort or creator, or borrow another index's
-grade. Provider constraints, when added, must not change these reference sets.
+grade. Provider constraints never change these reference sets.
 
 Use `tier.grades` on distinct valid values: equal values always share a grade.
 For descending distinct value position `i` (zero-based) among `n` values,
@@ -295,11 +297,16 @@ different effort. Value, output-speed and price grades keep their independent
 valid axes over the unfiltered role-selected rows. Intelligence value requires
 a usable score/positive-cost quotient; price tier uses matching task cost
 with 1 cheapest. Output-speed evidence remains independently available for
-area roles, without inferring area value/price grades. Display filters and
-future provider constraints do not re-bin any of these grades.
+area roles, without inferring area value/price grades. Capability display filters
+and provider constraints do not re-bin any of these grades.
 
-Intelligence advice spans all included models' valid scored/priced efforts,
-independent of the role floor and display filter. Preserve the cross-effort
+Intelligence advice spans all included models' valid scored/priced efforts
+**within the selected creator scope**, independent of the role floor and display
+filter. All providers restores the global included-model comparison universe.
+Provider means the Artificial Analysis model creator, not a gateway/endpoint or
+price dimension. A non-selected effort can supply replacement or alternative
+evidence. Artificial Analysis-only catalog models never enter this universe.
+Preserve the cross-effort
 frontier, strict same-effort replacement preference with cross-effort fallback,
 and up to three strictly cheaper alternatives with Intelligence score at least
 the opened score minus five, sorted by task cost. The Intelligence table puts
@@ -307,6 +314,56 @@ Frontier before Dominated, with full objective order within each section; the
 shared policy's direct objective order is independent of that presentation.
 Coding/Agentic tables use direct score order with no frontier, replacement,
 cheaper-alternative or cross-workload value claim.
+
+## Shared selection state and Provider picks
+
+`llmratings.session.Session(dataset, roles, role_name=None)` owns the active
+role, optional objective override, capability display filter, one creator or
+All providers, active view, passive model selection and requested model details.
+It starts on the first file-ordered role and its default objective, all grades,
+All providers and Model table, with no selected model or details. An explicit
+supported `--role` selects that initial profile. Nothing is saved.
+
+`Session.query()` uses `render.query` for both projections on the already loaded
+dataset; transitions do not acquire sources or create a new market snapshot.
+The batch Model table uses that same session and query. The query retains
+direct-objective `rows` separately from frontier-first `table_rows`/`sections`,
+plus creator-grouped `picks`, `providers_without_picks`, unranked measurement
+reasons and capability-display `excluded` records. It identifies the selected
+role/index/objective/provider/filter/view and an explicit global, creator-local
+or unavailable `advisory_scope`. Row replacement/alternative evidence and the
+cross-effort frontier path use that same scope. Coding/Agentic return no cost
+frontier, replacement or cheaper-alternative advice.
+
+Provider picks takes the first two **distinct models in direct objective
+order** within each creator: **Primary**, then **Runner-up**, each at its
+objective-selected effort. It does not read the first two frontier-first table
+rows. A dominated Intelligence model can be a pick; Primary does not mean global
+frontier membership. Runner-up is not another effort of Primary or a
+price-diversity/cheapest-alternative choice. One model yields one Primary and
+**No qualifying runner-up**; zero yields no picks and an explicit reason.
+All providers produces picks per creator, not two global picks.
+
+The full creator chooser contains every known creator in the loaded catalog,
+including Artificial Analysis-only creators without eligible picks. Fixed
+shortcuts are **OpenAI, Anthropic, Google, DeepSeek and xAI**, independent of
+scores, token share, role and eligible counts. A shortcut with no eligible model
+remains selectable. Unknown source-only creator evidence stays unranked and
+reachable under All providers rather than being assigned to an invented creator.
+
+Use explicit `set_role`, `set_objective`, `set_min_grade`, `set_provider` and
+`set_view` transitions. A role change clears the override and uses the new
+profile's index/default; every other choice is retained. Other transitions
+change only their named choice. All result-set changes clear passive selection
+and requested details. `select_model` never opens evidence;
+`request_details(model_key)` and `close_details()` open and close it explicitly.
+
+Empty or unavailable results retain all selected choices. Query
+`recovery_actions` exposes named-only actions: **All providers** clears only the
+creator, **Clear capability filter** clears only that filter, **Highest
+capability** changes only the objective, and **Use role default** clears only
+its override. `Session.recover(action)` applies that named transition. No
+recovery changes index, creator, filter or view as a hidden fallback.
 
 ## Visible evidence and proxy limits
 

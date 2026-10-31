@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from . import fetch, identity, render, tui
+from .session import Session
 
 
 def main(argv=None):
@@ -69,10 +70,10 @@ def main(argv=None):
     if interactive:
         return tui.run(ds, roles, args.role)
 
-    role = next(r for r in roles if r["name"] == args.role)
+    session = Session(ds, roles, args.role)
     print(render.ATTRIBUTION)
     print()
-    print("\n".join(render.render(ds, role)))
+    print("\n".join(render.render(ds, session.role, result=session.query())))
     return 0
 
 
