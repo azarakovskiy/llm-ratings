@@ -68,10 +68,11 @@ class _LiveServer:
 
     PAGE_SIZE = 200
 
-    def __init__(self, fixtures_dir=FIXTURES, fail=None, page_versions=None):
+    def __init__(self, fixtures_dir=FIXTURES, fail=None, page_versions=None, page_dates=None):
         self.dir = Path(fixtures_dir)
         self.fail = fail
         self.page_versions = page_versions or {}
+        self.page_dates = page_dates or {}
         self.seen = []
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _live_handler(self))
         self.port = self.httpd.server_address[1]
@@ -111,6 +112,7 @@ class _LiveServer:
             batch = aa["data"][(page - 1) * self.PAGE_SIZE: page * self.PAGE_SIZE]
             if page in self.page_versions:
                 aa["intelligence_index_version"] = self.page_versions[page]
+            aa.update(self.page_dates.get(page, {}))
             return json.dumps(dict(aa, data=batch)).encode()
         if path.startswith("/api/v1/models"):
             p = self.dir / "or.json"
@@ -1429,7 +1431,9 @@ class SourceContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             for source, name in {**fetch.FILES, "or": "or.json"}.items():
                 Path(td, name).write_text(json.dumps(docs[source]))
-            srv = _LiveServer(td, page_versions={1: 4.1, 2: "v5-test"})
+            srv = _LiveServer(td, page_versions={1: 4.1, 2: "v5-test"},
+                              page_dates={1: {"updated_at": "2026-09-01"},
+                                          2: {"updated_at": "2026-09-02"}})
             self.addCleanup(srv.stop)
             previous = os.environ.copy()
             try:
@@ -1451,6 +1455,9 @@ class SourceContract(unittest.TestCase):
                          srv.url("/api/v2/language/models/free?page_size=200&page=1"))
         self.assertEqual(ratings[-1].source_url,
                          srv.url("/api/v2/language/models/free?page_size=200&page=2"))
+        self.assertEqual(ratings[0].source_dates, {"updated_at": "2026-09-01"})
+        self.assertEqual(ratings[-1].source_dates, {"updated_at": "2026-09-02"})
+        self.assertFalse(ds.provenance["sources"]["aa"].get("source_dates"))
         self.assertEqual(ds.provenance["mode"], "live")
         self.assertIsNone(ds.provenance["sources"]["aa"]["snapshot_date"])
         self.assertEqual(len(ds.provenance["sources"]["aa"]["pages"]), 2)

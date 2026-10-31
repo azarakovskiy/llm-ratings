@@ -53,10 +53,8 @@ def model_evidence(ds, result, record):
     field = render.INDEX_FIELD[index]
     key, selected = record["key"], record["configuration"]
     measurements = record["measurements"]
-    capability = render._capability_grades(ds, index)
-    aa_scores = [getattr(r, field) for r in ds.ratings
-                 if r.source == "aa" and r.effort in EFFORTS
-                 and render._finite(getattr(r, field))]
+    aa_scores = render._capability_scores(ds, index)
+    capability = grades(aa_scores)
     efforts = sorted({r.effort for r in measurements},
                      key=lambda e: EFFORTS.index(e) if e in EFFORTS else len(EFFORTS))
     configurations = []
@@ -72,19 +70,17 @@ def model_evidence(ds, result, record):
             _, eligibility_reason = render._select(
                 [aa] if aa is not None else [], index, objective,
                 result["role"]["floor"], capability)
-        tb_population = best_tb(ds.ratings, effort)
-        tb_scores = [r.score for r in tb_population.values() if render._finite(r.score)]
-        dsw_scores = [r.score for r in ds.ratings
-                      if r.source == "deepswe" and r.effort == effort
-                      and render._finite(r.score)]
-        source_grades = {"aa": capability,
-                         "deepswe": render._source_grades(ds, "deepswe", effort),
+        tb_population = render._source_population(ds, "tb", effort)
+        tb_scores = [r.score for r in tb_population]
+        dsw_scores = [r.score for r in render._source_population(ds, "deepswe", effort)]
+        source_grades = {"aa": capability, "deepswe": grades(dsw_scores),
                          "tb": grades(tb_scores)}
         populations = {"aa": aa_scores, "deepswe": dsw_scores, "tb": tb_scores}
         ratings = {"aa": aa,
                    "deepswe": next((r for r in at_effort if r.source == "deepswe"), None),
-                   "tb": tb_population.get(key) or next(
-                       (r for r in at_effort if r.source == "tb"), None)}
+                   "tb": next((r for r in tb_population if r.model_key == key), None)
+                   or best_tb(at_effort, effort).get(key)
+                   or next((r for r in at_effort if r.source == "tb"), None)}
         effort_context = (f"at {render.EFFORT_LABEL[effort]} effort" if effort in EFFORTS
                           else "with no measured reasoning effort")
         sources = []
@@ -95,7 +91,7 @@ def model_evidence(ds, result, record):
             score = getattr(rating, field) if source == "aa" and rating else (
                 rating.score if rating else None)
             grade = source_grades[source].get(score)
-            if source == "aa" and effort not in EFFORTS:
+            if effort not in EFFORTS:
                 grade = None
             if chosen:
                 grade = record[{"aa": "grade", "deepswe": "dsw", "tb": "tb"}[source]]
@@ -104,8 +100,8 @@ def model_evidence(ds, result, record):
                 reason = f"No {name} row {effort_context}"
             elif not render._finite(score):
                 reason = f"No finite {name} {source_index} score {effort_context}"
-            elif source == "aa" and effort not in EFFORTS:
-                reason = "No measured reasoning effort; outside the configuration reference population"
+            elif effort not in EFFORTS:
+                reason = "No measured reasoning effort; capability grade and rank unavailable"
             population_label = (
                 f"All scored Artificial Analysis {source_index} configurations across measured efforts"
                 if source == "aa" else f"{name} {source_index} {effort_context}"

@@ -111,17 +111,21 @@ def _ratio(r):
     return value if math.isfinite(value) else None
 
 
-def _source_grades(ds, source, effort):
-    return grades([r.score for r in ds.ratings
-                   if r.source == source and r.effort == effort
-                   and _finite(r.score)])
+def _source_population(ds, source, effort):
+    """Scored measured-effort rows shared by independent grades and ranks."""
+    if effort not in EFFORTS:
+        return []
+    ratings = best_tb(ds.ratings, effort).values() if source == "tb" else ds.ratings
+    return [r for r in ratings if r.source == source and r.effort == effort
+            and _finite(r.score)]
 
 
-def _capability_grades(ds, index):
+def _capability_scores(ds, index):
+    """All scored selected-index configurations, before display constraints."""
     field = INDEX_FIELD[index]
-    return grades([getattr(r, field) for r in ds.ratings
-                   if r.source == "aa" and r.effort in EFFORTS
-                   and _finite(getattr(r, field))])
+    return [getattr(r, field) for r in ds.ratings
+            if r.source == "aa" and r.effort in EFFORTS
+            and _finite(getattr(r, field))]
 
 
 def _included(ds):
@@ -200,7 +204,7 @@ def query(ds, role, objective=None, min_grade=None, provider=None, view="table")
     if objective not in OBJECTIVES:
         raise ValueError(f"unknown objective: {objective!r}")
     index = role["index"]
-    capability = _capability_grades(ds, index)
+    capability = grades(_capability_scores(ds, index))
     supported = index == "intelligence" or objective == "cap"
     unavailable = None if supported else (
         f"Unavailable objective: {OBJECTIVE_LABEL[objective]} for "
@@ -237,10 +241,11 @@ def query(ds, role, objective=None, min_grade=None, provider=None, view="table")
         dsw = next((r for r in measurements[key] if r.source == "deepswe"
                     and r.effort == effort), None)
         if effort not in tb_by_effort:
-            tb_by_effort[effort] = best_tb(ds.ratings, effort)
-            source_grades[effort] = _source_grades(ds, "deepswe", effort)
-            tb_grades_by_effort[effort] = grades(
-                [r.score for r in tb_by_effort[effort].values() if _finite(r.score)])
+            tb_population = _source_population(ds, "tb", effort)
+            tb_by_effort[effort] = {r.model_key: r for r in tb_population}
+            source_grades[effort] = grades(
+                [r.score for r in _source_population(ds, "deepswe", effort)])
+            tb_grades_by_effort[effort] = grades([r.score for r in tb_population])
         collapsed = tb_by_effort[effort]
         tb = collapsed.get(key)
         tb_grades = tb_grades_by_effort[effort]
@@ -322,6 +327,17 @@ def query(ds, role, objective=None, min_grade=None, provider=None, view="table")
                 "DeepSWE or Terminal-Bench rating is required")
             group["reason"] = f"No qualifying configuration — {name} · {why}"
             without_picks.append(group)
+    creator_unavailable = [
+        dict(row, reason="Artificial Analysis did not supply a model creator; "
+             "this eligible configuration cannot be assigned to creator picks")
+        for row in rows if row["provider"] == "—"]
+    if view == "picks" and rows and not picks:
+        status = "creator_unavailable"
+        reason = (f"No creator-attributed picks — {selected}. Eligible configurations "
+                  "have no published creator; their evidence remains under Creator unavailable.")
+    detail_rows = (table_rows if view == "table" else
+                   [row for group in picks for row in
+                    (group["primary"], group["runner_up"]) if row] + creator_unavailable)
     recoveries = []
     if provider is not None:
         recoveries.append(dict(action="all_providers", label="All providers"))
@@ -337,6 +353,8 @@ def query(ds, role, objective=None, min_grade=None, provider=None, view="table")
                 rows=rows, unranked=unranked, excluded=excluded, points=pts,
                 frontier_path=pareto(pts), sections=sections, table_rows=table_rows,
                 picks=picks, providers_without_picks=without_picks,
+                creator_unavailable=creator_unavailable,
+                detail_targets={row["key"]: row for row in detail_rows + excluded + unranked},
                 creators=catalog_creators, shortcuts=PROVIDER_SHORTCUTS,
                 recovery_actions=recoveries)
 

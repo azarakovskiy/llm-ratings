@@ -81,6 +81,16 @@ class ModelEvidence(unittest.TestCase):
         self.assertIn("Maximum", opened["rationale"])
         self.assertIn("no fixed effort", opened["rationale"])
 
+    def test_published_standard_error_stays_distinct_from_a_confidence_interval(self):
+        sources = self.sources(self.opened("gpt-5-6-luna"), "max")
+        tb = sources["tb"]["rating"]
+        self.assertEqual((tb.score, tb.accuracy_stderr), (0.757, 0.021))
+        self.assertEqual((tb.ci_lo, tb.ci_hi), (None, None))
+        self.assertEqual(tb.raw["metrics"]["accuracy_stderr"], 0.021)
+        dsw = sources["deepswe"]["rating"]
+        self.assertEqual((dsw.ci_lo, dsw.ci_hi),
+                         (0.6319549876432895, 0.7117950123567105))
+
     def test_dominated_configuration_keeps_replacement_without_false_disagreement(self):
         opened = self.opened("gpt-5-6-sol")
         sources = self.sources(opened, "max")
@@ -291,7 +301,7 @@ class ModelEvidence(unittest.TestCase):
         self.assertIsNone(sources["tb"]["score"])
         self.assertEqual(self.configuration(opened, "max")["disagreement"], [])
 
-    def test_unmeasured_source_efforts_are_retained_last_not_invented_as_configurations(self):
+    def test_unmeasured_efforts_keep_raw_scores_without_grades_ranks_or_disagreement(self):
         docs = self.docs()
         docs["deepswe"]["rows"].extend([
             {"model": "gpt-5-6-luna", "pass_at_1": 0.7},
@@ -300,10 +310,10 @@ class ModelEvidence(unittest.TestCase):
         docs["tb"]["submissions"].update({
             "unmeasured-luna.json": {
                 "source_filter": {"model_name": "GPT-5.6 Luna", "reasoning_effort": "low"},
-                "metrics": {"accuracy": 0.5}},
+                "metrics": {"accuracy": 0.8}},
             "unmeasured-peer.json": {
                 "source_filter": {"model_name": "no-effort-peer"},
-                "metrics": {"accuracy": 0.6}},
+                "metrics": {"accuracy": 0.5}},
         })
         ds = self.load(docs)
         opened = self.opened("gpt-5-6-luna", ds=ds)
@@ -316,19 +326,26 @@ class ModelEvidence(unittest.TestCase):
         self.assertIn("No measured reasoning effort", config["eligibility_reason"])
         sources = self.sources(opened, None)
         self.assertIsNone(sources["aa"]["score"])
-        self.assertEqual((sources["deepswe"]["score"], sources["deepswe"]["grade"],
-                          sources["deepswe"]["rank"], sources["deepswe"]["population_size"]),
-                         (0.7, 3, 2, 2))
-        self.assertEqual((sources["tb"]["score"], sources["tb"]["grade"],
-                          sources["tb"]["rank"], sources["tb"]["population_size"]),
-                         (0.5, 3, 2, 2))
+        self.assertEqual(sources["deepswe"]["score"], 0.7)
+        self.assertEqual(sources["tb"]["score"], 0.8)
+        for source in sources.values():
+            self.assertIsNone(source["grade"])
+            self.assertIsNone(source["rank"])
+        self.assertEqual(sources["deepswe"]["population_size"], 0)
+        self.assertEqual(sources["tb"]["population_size"], 0)
+        self.assertEqual(config["disagreement"], [])
+        self.assertEqual(sources["deepswe"]["rating"].raw["pass_at_1"], 0.7)
         self.assertEqual(sources["tb"]["rating"].raw["source_filter"]["reasoning_effort"],
                          "low")
         self.assertIn("no measured reasoning effort", sources["tb"]["population_label"])
         source_only = self.opened("dsw:no-effort-peer", ds=ds)
         self.assertIsNone(source_only["configuration"])
         self.assertEqual([c["effort"] for c in source_only["configurations"]], [None])
-        self.assertEqual(self.sources(source_only, None)["deepswe"]["rank"], 1)
+        peer = self.configuration(source_only, None)
+        self.assertEqual(peer["disagreement"], [])
+        for source in peer["sources"]:
+            self.assertIsNone(source["grade"])
+            self.assertIsNone(source["rank"])
 
     def test_missing_selected_index_stays_unranked_without_source_or_index_substitution(self):
         docs = self.docs()

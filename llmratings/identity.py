@@ -28,9 +28,11 @@ Coding/Agentic formulas are not established; these are not creator-endpoint
 performance claims or area-index task costs.
 
 Dataset.provenance carries fetch mode/time, source URLs and available historical
-snapshot/source dates. Each Rating adds its source URL and reported AA index
-version; TB retains the individual submission URL and recency date. Fixture
-mode and synthetic flags must not be presented as current live measurements.
+snapshot/source dates. Each Rating adds its source URL, matching source-page
+dates and reported AA index version; TB retains the individual submission URL,
+recency date and published accuracy standard error, not an invented confidence
+interval. Fixture mode and retained fictional/synthetic flags must not be
+presented as current live measurements.
 
 OpenRouter catalog rows supply context/modalities only. Dataset.openrouter_models
 maps a supplied canonical_slug through its catalog id and the existing alias/
@@ -108,6 +110,8 @@ class Rating:
     pricing: dict[str, float | None] = field(default_factory=dict)  # USD / 1M tokens
     intelligence_index_version: str | float | None = None
     source_url: str | None = None
+    source_dates: dict[str, str] = field(default_factory=dict)
+    accuracy_stderr: float | None = None  # Published TB standard error, not a CI
 
 
 @dataclass
@@ -234,7 +238,9 @@ def build(aliases, raw):
                 "price_1m_cache_hit_tokens", "price_1m_cache_write_tokens")},
             intelligence_index_version=page.get(
                 "intelligence_index_version", aa.get("intelligence_index_version")),
-            source_url=page.get("url", urls.get("aa"))))
+            source_url=page.get("url", urls.get("aa")),
+            source_dates=_object(page.get("source_dates") if page else
+                                 _object(sources.get("aa")).get("source_dates"))))
 
     ds = raw.get("deepswe")
     if not isinstance(ds, dict) or not isinstance(ds.get("rows"), list):
@@ -253,7 +259,8 @@ def build(aliases, raw):
             "deepswe", key, effort,
             _metric(row.get("pass_at_1")), None, None,
             _metric(row.get("ci_lo")), _metric(row.get("ci_hi")), row,
-            source_url=urls.get("deepswe")))
+            source_url=urls.get("deepswe"),
+            source_dates=_object(_object(sources.get("deepswe")).get("source_dates"))))
 
     tb = raw.get("tb")
     if not isinstance(tb, dict) or not isinstance(tb.get("submissions"), dict):
@@ -274,15 +281,13 @@ def build(aliases, raw):
             effort = None  # v2.1 covers high/xhigh/max only — attach, never a config
         metrics = _object(row.get("metrics"))
         acc = _metric(metrics.get("accuracy"))
-        stderr = _metric(metrics.get("accuracy_stderr"))
         key = _join(aliases, models, name, "tb:")
         date = _object(row.get("metadata")).get("date")
         agent = sf.get("agent")
         ratings.append(Rating(
-            "tb", key, effort, acc, None, None,
-            _metric(acc - stderr) if acc is not None and stderr is not None else None,
-            _metric(acc + stderr) if acc is not None and stderr is not None else None,
+            "tb", key, effort, acc, None, None, None, None,
             row, agent=agent if isinstance(agent, str) else None,
+            accuracy_stderr=_metric(metrics.get("accuracy_stderr")),
             date=date if isinstance(date, str) else None,
             source_url=tb_urls.get(fname)))
 

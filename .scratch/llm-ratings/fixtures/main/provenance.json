@@ -1,4 +1,5 @@
 {
+  "fictional_model_names": true,
   "sources": {
     "deepswe": {"snapshot_date": "2026-08-05", "synthetic": false},
     "aa": {"snapshot_date": "2026-08-05", "synthetic": false},

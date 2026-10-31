@@ -142,3 +142,25 @@ are preserved. No recommendation policy, role or browser controls changed.
 All acquisition checks were offline fixtures or the local HTTP origin. No new
 authenticated external response, current market measurement, area-index cost
 basis or verified OpenRouter 30-day share is claimed.
+
+### Final review resolution — 2026-10-31
+
+- Artificial Analysis ratings now retain `source_dates` from the same page
+  as their `source_url` and index version. Paginated acquisition no longer
+  assigns the final page's dates to the source's first URL. Evidence exposes
+  the individual page URL/date pairs and the opened measurement's own dates.
+- Optional fixture metadata retains the boolean `fictional_model_names`,
+  separately from per-source `synthetic`. The main historical fixture sets
+  that flag explicitly; a different saved-response directory does not inherit
+  its fictional/synthetic claims.
+- Terminal-Bench retains published `accuracy_stderr` as a standard error,
+  with its raw payload intact. It no longer writes calculated accuracy ±
+  one standard error into confidence-interval fields. DeepSWE's published
+  confidence-interval endpoints remain unchanged.
+- The real local-origin acquisition consumer retained page 1
+  `updated_at: 2026-09-01` and page 2 `updated_at: 2026-09-02`, each at its
+  own URL. A separate fixture consumer retained Luna Maximum accuracy
+  **0.757**, published standard error **0.021** and no invented confidence
+  interval. The full **109-test** suite and lint passed once after all review
+  fixes; [ticket 38](38-inline-evidence-web-cutover.md#final-review-resolution--2026-10-31)
+  records the browser and check evidence.

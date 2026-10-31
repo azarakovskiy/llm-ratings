@@ -59,6 +59,10 @@ rows. Recorded source snapshot dates and index versions describe only the saved
 evidence. Reading it today does not make it current. Missing creators in this
 small fixture set are not market-coverage claims. See the
 [fixture provenance and policy contract](.scratch/llm-ratings/fixtures/main/README.md).
+Other fixture directories can contain real saved responses. Their offline notice
+does not imply fictional names or synthetic sources: those caveats use the
+optional `provenance.json` boolean `fictional_model_names` and per-source
+`synthetic` flags. Missing metadata remains unknown.
 
 ## Roles and controls
 
@@ -104,6 +108,9 @@ Use the visible controls with mouse or keyboard:
   action closes it. Focus or passive selection does not open evidence. Available
   unranked and display-excluded models retain evidence and specific reasons.
   Role, objective, provider, filter and view changes clear stale model details.
+  In Provider picks, eligible models without a published creator remain under
+  **Creator unavailable**, with their own Details action, not an invented creator.
+  A queued Details request cannot open a model absent from the active view.
 - **How picks work** is a secondary disclosure with role purposes, index limits,
   eligibility, objective ordering and ties, grade populations and source
   definitions. Opening it or Details does not refetch sources or alter choices.
@@ -116,10 +123,11 @@ runner-up does not cause another effort or creator to be substituted.
 
 The comparison keeps source attribution and the refresh/fetch date visible.
 **Source dates and provenance** and model Details distinguish the actual UTC
-fetch time from retained publication, observation or snapshot dates. Unknown
-source dates remain unavailable. Each live launch fetches once; controls reuse
-that loaded dataset. Restart the process for a new refresh. There is no cache,
-automatic refresh or scheduler.
+fetch time from retained publication, observation or snapshot dates. Artificial
+Analysis page URLs and dates stay paired; an opened measurement shows its own
+page's dates, not the last page's date. Unknown source dates remain unavailable.
+Each live launch fetches once; controls reuse that loaded dataset. Restart the
+process for a new refresh. There is no cache, automatic refresh or scheduler.
 
 Artificial Analysis, DeepSWE and Terminal-Bench scores, grades and ranks are
 separate signals with labelled reference populations and source links; they
@@ -130,6 +138,10 @@ matching Intelligence benchmark USD per task, not token list prices or another
 benchmark's run expenditure. **Capability per dollar** uses that matching
 Intelligence score/cost basis only. Input/output token prices have separate
 USD-per-million-token units.
+Raw scores with no measured effort remain visible, but their capability grades,
+ranks and disagreement are unavailable. Published confidence intervals remain
+distinct from Terminal-Bench's published accuracy standard error; a standard
+error is not labelled as a confidence interval.
 
 **Time to first answer token, including thinking** (seconds), **Output tokens per
 second**, **Time to first token**, and **Estimated response time for 500 answer
