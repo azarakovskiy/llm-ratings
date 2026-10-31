@@ -138,6 +138,12 @@ def create_server(session, port=0):
                     result = session.set_view(value)
                 elif action == "recover":
                     result = session.recover(value)
+                elif action == "details":
+                    result = session.request_details(value)
+                elif action == "close_details":
+                    if value:
+                        raise ValueError("invalid close request")
+                    result = session.close_details()
                 else:
                     raise ValueError("invalid action")
             except (ValueError, OSError):

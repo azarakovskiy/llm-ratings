@@ -1,5 +1,28 @@
 # Roles replace categories
 
+**Status: partially superseded by the [amended specification](../../.scratch/llm-ratings/spec.md)
+and [ticket 38](../../.scratch/llm-ratings/issues/38-inline-evidence-web-cutover.md).**
+The former five-role catalog is superseded by Explorer, Researcher, Planner,
+Coder, Reviewer, Coordinator, Generalist and Utility in `llmratings/roles.json`.
+The historical claim below that the data model and rating machinery are
+unchanged is superseded: profiles now choose distinct Intelligence, Coding or
+Agentic indexes, with index-specific eligibility, reference populations and
+retained provenance. Matching task-cost advice is established for Intelligence
+only. The terminal tabs/keymap are superseded by visible web controls; there is
+no fixed role effort or parallel terminal UI.
+
+Still valid: checked-in role profiles separate task purpose from capacity
+guidance; the active objective selects each model's measured reasoning effort;
+a role change resets the objective override; the capability floor applies only
+to Lowest qualifying price; Highest capability and Best value remain floor-free;
+and Intelligence frontier, replacement and cheaper-alternative advice remains
+floor-free (and display-filter-free) within the selected provider scope. See
+the [runtime README](../../README.md) for current role defaults and controls.
+
+## Historical decision
+
+The original reasoning and consequences below are retained as history.
+
 Ticket 07 consolidated "OMP's 10 roles + 7 agents" into five abstract
 use-case categories — Chores, Everyday, Deliberate, Deep, Best Value —
 each fixing one reasoning effort. In practice the abstraction did not

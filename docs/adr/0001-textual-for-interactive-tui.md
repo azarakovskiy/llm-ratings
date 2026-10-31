@@ -1,5 +1,20 @@
 # Textual for the interactive TUI
 
+**Status: superseded by [ticket 38](../../.scratch/llm-ratings/issues/38-inline-evidence-web-cutover.md).**
+The supported interactive surface is now the local web application, launched
+with `make run` or `python3 -m llmratings --web`. Module invocation without
+`--web` always produces batch output, including in a terminal. The terminal
+adapter, TTY dispatch, Textual dependency, dependency-install target and
+terminal-only tests have been removed. UI-independent state coverage now lives
+in `tests/test_session.py`; structured evidence and web consumers retain the
+valid model/source behavior. The runtime uses only the Python standard library.
+See the [runtime README](../../README.md) for current setup and usage.
+
+## Historical decision
+
+The reasoning and implementation consequences below describe the earlier TUI,
+not current installation instructions.
+
 The interactive TUI renders as a staggered mess of text on the user's
 terminal (cmux, full-width pane): the ticket-16 session hand-rolled ANSI
 frames — `"\x1b[2J\x1b[H" + "\n".join(lines)` — with `\n`-only line endings

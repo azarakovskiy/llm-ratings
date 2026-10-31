@@ -13,11 +13,15 @@ document.addEventListener("submit", (event) => {
   if (!form.matches("#app form")) return;
   event.preventDefault();
   const data = new URLSearchParams(new FormData(form, event.submitter));
-  const focusId = (event.submitter || document.activeElement).id;
+  const trigger = event.submitter || document.activeElement;
+  const focusId = trigger.dataset.focusTarget || trigger.id;
   pending = pending.then(async () => {
     const app = document.getElementById("app");
     const error = document.getElementById("request-error");
     app.setAttribute("aria-busy", "true");
+    const disclosures = [...app.querySelectorAll("details[id][open]")].map(node => node.id);
+    const scrolls = [...app.querySelectorAll('[role="region"][aria-label]')]
+      .map(node => [node.getAttribute("aria-label"), node.scrollLeft]);
     try {
       const response = await fetch("/", { method: "POST", body: data });
       if (!response.ok) throw new Error("Selection request failed");
@@ -25,6 +29,15 @@ document.addEventListener("submit", (event) => {
       const replacement = next.getElementById("app");
       if (!replacement) throw new Error("Selection response missing");
       app.replaceWith(replacement);
+      disclosures.forEach(id => {
+        const disclosure = document.getElementById(id);
+        if (disclosure) disclosure.open = true;
+      });
+      scrolls.forEach(([label, left]) => {
+        const region = [...replacement.querySelectorAll('[role="region"][aria-label]')]
+          .find(node => node.getAttribute("aria-label") === label);
+        if (region) region.scrollLeft = left;
+      });
       document.getElementById("state-summary").textContent =
         next.getElementById("state-summary").textContent;
       document.getElementById(focusId)?.focus({ preventScroll: true });
