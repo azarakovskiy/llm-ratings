@@ -8,9 +8,9 @@ effort parenthetical; provider = AA model_creator name.
 
 DeepSWE/TB model strings map onto AA base slugs via the alias table. A rated
 model with no AA row (or whose alias resolves to nothing in the data) keeps a
-source-only identity: key "dsw:<name>", provider "—", no price, no PPI — and
-no objective-selected configuration, so it never enters a role table (ticket
-18).
+source-only identity: key "dsw:<name>", provider "—", no matching task cost.
+It stays reachable as unranked evidence, with no fabricated selected-index
+configuration or cost-based recommendation.
 
 Rating rows attach wholesale: `raw` always contains the original source row.
 For AA, `score` is Intelligence; `coding_score` and `agentic_score` stay

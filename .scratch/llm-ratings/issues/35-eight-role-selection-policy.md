@@ -1,7 +1,7 @@
 # Implement the eight-role selection policy
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 34
 
 ## What to build
@@ -77,13 +77,13 @@ Effort order is the existing `low < medium < high < xhigh < max`. Display full e
 
 ## Acceptance criteria
 
-- [ ] All eight profiles load in the exact approved order with selected index/default, meaningful purpose/capacity prose and no old-name aliases. Default batch output is Explorer/Intelligence/Best value; `--role Coder`, `--role Coordinator` and `--role Utility` use the exact approved policy. A valid edited role file changes consumer behavior; malformed fields fail clearly.
-- [ ] A real multi-effort fixture selects one configuration per included model under every supported objective and orders models using every comparison key above. Regression cases distinguish score, ratio, cost, effort and canonical-key ties both within and across models. Changing only published timing never changes eligibility, effort, order or grades used for capability.
-- [ ] Intelligence finite-score/missing-cost, negative-cost, zero-cost and non-finite cases have the exact objective eligibility above. Area score without cost qualifies; missing area score with a valid Intelligence score does not. Unsupported area overrides remain selected and explicitly unavailable.
-- [ ] Capability grades match a hand-computed distinct-value population across efforts for each selected index, including finite scored configurations without eligible cost and those outside recommendation inclusion. Equal values share grades. DeepSWE/Terminal-Bench grades and best-agent collapse retain their prior independent reference sets.
-- [ ] A grade exactly 2 passes Lowest qualifying price and grade 1 does not. The same grade-1 model can qualify for Highest capability/Best value; explicit display filtering remains separate. Value/speed/price grade sets do not shrink under display filters.
-- [ ] Batch consumers expose unranked reasons, all-unqualified and unsupported-objective states without a fabricated score, cost, alternative or recommendation. Source-only rows stay accessible and Artificial Analysis-only models do not enter the recommendation universe.
-- [ ] Intelligence frontier/replacement/alternative behavior remains floor-free and filter-free; Coding/Agentic consumers show direct score-order advice without cost-frontier or cheaper-alternative claims. Full labels and role-proxy limitations appear in runtime documentation/consumer explanations.
+- [x] All eight profiles load in the exact approved order with selected index/default, meaningful purpose/capacity prose and no old-name aliases. Default batch output is Explorer/Intelligence/Best value; `--role Coder`, `--role Coordinator` and `--role Utility` use the exact approved policy. A valid edited role file changes consumer behavior; malformed fields fail clearly.
+- [x] A real multi-effort fixture selects one configuration per included model under every supported objective and orders models using every comparison key above. Regression cases distinguish score, ratio, cost, effort and canonical-key ties both within and across models. Changing only published timing never changes eligibility, effort, order or grades used for capability.
+- [x] Intelligence finite-score/missing-cost, negative-cost, zero-cost and non-finite cases have the exact objective eligibility above. Area score without cost qualifies; missing area score with a valid Intelligence score does not. Unsupported area overrides remain selected and explicitly unavailable.
+- [x] Capability grades match a hand-computed distinct-value population across efforts for each selected index, including finite scored configurations without eligible cost and those outside recommendation inclusion. Equal values share grades. DeepSWE/Terminal-Bench grades and best-agent collapse retain their prior independent reference sets.
+- [x] A grade exactly 2 passes Lowest qualifying price and grade 1 does not. The same grade-1 model can qualify for Highest capability/Best value; explicit display filtering remains separate. Value/speed/price grade sets do not shrink under display filters.
+- [x] Batch consumers expose unranked reasons, all-unqualified and unsupported-objective states without a fabricated score, cost, alternative or recommendation. Source-only rows stay accessible and Artificial Analysis-only models do not enter the recommendation universe.
+- [x] Intelligence frontier/replacement/alternative behavior remains floor-free and filter-free; Coding/Agentic consumers show direct score-order advice without cost-frontier or cheaper-alternative claims. Full labels and role-proxy limitations appear in runtime documentation/consumer explanations.
 
 ## Verification
 
@@ -104,3 +104,83 @@ No new provider controls, browser rendering, TUI provider additions, role-specif
 - [Define quick selection by major model provider — approved Answer](29-provider-quick-selection.md#answer): provider selection does not change score/grade reference populations.
 - [Redesign the provider-selection prototype for readable model advice — live Provider lens approval](33-redesign-provider-selection-prototype.md#answer): full visible labels, retained unavailable states and secondary policy explanations.
 - [Roles replace categories ADR](../../../docs/adr/0002-roles-replace-categories.md): preserve role profiles, objective-selected efforts and floor-free advice; its five-role/unchanged-data-model clauses are superseded by the resolved spec, not grounds to retain obsolete behavior.
+
+## Answer
+
+Resolved 2026-10-31 on `implement/t35`, based on integration prerequisite
+`053812a`. The real batch and existing session consumers now use the approved
+eight profiles and one selected-index policy. No provider controls, web
+surface, extra source, timing objective or compatibility role aliases were added.
+
+### Downstream contract
+
+- `roles.json` remains the editable file-order catalog. Profiles declare
+  `index` as `intelligence`, `coding` or `agentic`, plus the existing objective,
+  purpose/capacity prose and floor (default 2). Startup rejects malformed
+  fields and duplicate names; a recognized area/value or area/price profile
+  remains valid and reports an unavailable objective.
+- `render.query(ds, role, objective=None, min_grade=None)` is the shared
+  consumer seam replacing `objective_rows`. It returns `index`, `objective`,
+  `status`, `reason`, `rows`, `unranked`, `excluded` and `points`.
+  Status is `ok`, `no_qualifying` or `unavailable_objective`.
+- `rows` contains one actual selected `configuration` (`Rating`) per eligible
+  model, in the complete **direct objective order**. Each row has identity,
+  measured `effort`, selected-index `score`/`grade`, independent `dsw`/`tb`
+  grades, selected-effort source `ratings`, all model `measurements`, timing,
+  and the supported Intelligence `cost`/`ppi`/value/price fields.
+  Coding/Agentic cost/value/price/frontier/replacement fields stay `None`.
+  Source-only and other unqualified identities remain in `unranked` with
+  their measurements and a specific reason, without a fabricated selection.
+- Capability reference populations include all finite selected-index measured
+  configurations across efforts, including Artificial Analysis-only identities
+  and cost-ineligible rows. The price floor is inclusive and applies only
+  under Lowest qualifying price; display filtering happens after effort
+  selection and independent selected-row axis grades, with exclusions kept
+  separate from measurement failures.
+- Intelligence `points` spans every valid scored/non-negative matching-cost
+  effort of included models, independent of floor/display constraints.
+  Strict-frontier ties retain identical score/cost points, and negative
+  finite scores work. Same-effort-first strict replacements and the three
+  cheapest alternatives within 5 Intelligence points retain their prior
+  boundaries. Area indexes have no cost-based advice.
+- `table` still returns `(lines, display_rows)`. Its Intelligence sections are
+  frontier-first, not provider-pick order; area rows use direct score order.
+  `detail` keeps full effort/source/metric labels, independent source ranks,
+  missing measurements, timing distinctions, context and proxy limitations.
+  Later provider consumers must start from `query`, not frontier section order.
+
+Runtime policy/source documentation is updated in the fixture README. Historical
+five-role/data-model ADR clauses remain superseded by the approved spec; final
+web runtime supersession remains assigned to ticket 38.
+
+### Exercised verification
+
+- Affected consumer command:
+  `PYTHONPATH=tests python3 -m unittest test_cli.SelectionPolicy test_cli.RolesFile test_cli.SavedPolicy test_cli.TerminalBench test_cli.SourceContract test_tui`
+  ran **65 tests**. It found one stale test expectation: Kimi's new
+  cross-effort Intelligence grade 4 differs by two from its independent
+  DeepSWE Maximum grade 2, so disagreement must remain visible despite
+  missing Terminal-Bench. The expectation was corrected without changing
+  the measured grading behavior.
+- `make test`: **81 tests passed**, including all affected cases and the
+  corrected missing-source/disagreement regression. This replaces obsolete
+  wording/terminal-padding checks with selected identities, exact tie keys,
+  real-source data boundaries and observable state transitions.
+- `make lint`: **exit 0**. Each repository command ran once after code/test
+  implementation.
+- Separate non-TTY shell invocations of
+  `LLM_RATINGS_AA_API_KEY=dummy python3 -m llmratings --fixtures .scratch/llm-ratings/fixtures/main --role NAME`
+  for Coder, Explorer, Coordinator and Utility all returned **exit 0**.
+  Coder selected Sol **Extra high / Coding 78.3**; Coordinator selected
+  Opus **Maximum / Agentic 55.3**; Explorer used Intelligence/Best value
+  with Luna **Low**; Utility used Lowest qualifying price with Luna
+  **Extra high / grade 2**. Full objective/index labels, Artificial Analysis
+  attribution, independent missing-source states and source-only reasons
+  were observed. Area tables contained no cost frontier or value columns.
+- `git merge --no-edit integration/role-advice-web`: **Already up to date**.
+  Read-only independent review found no concrete correctness or acceptance
+  gap; it ran no checks.
+
+All acquisition evidence here is saved historical/synthetic fixtures or the
+local HTTP test origin, not a new authenticated source response, current
+market recommendation, matching area-index cost or verified token-share feed.

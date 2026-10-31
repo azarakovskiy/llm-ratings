@@ -1,8 +1,8 @@
-# Fixtures — main and runtime source contract (tickets 11–18, 34)
+# Fixtures — main and runtime source/selection contract (tickets 11–18, 34–35)
 
-Saved copies of the real source payloads, curated to a small subset, served
-by the CLI's `--fixtures` mode (the spec's user-confirmed test seam: no
-network below the fetch boundary).
+Saved source payloads, curated to a small subset and supplemented with
+synthetic rows, served by the CLI's `--fixtures` mode (the spec's
+user-confirmed test seam: no network below the fetch boundary).
 
 These are historical test payloads, not current market measurements. The
 recorded snapshot date and Intelligence Index version describe the saved
@@ -35,8 +35,9 @@ Fetched live 2026-08-05:
   the rows are hand-written in the real shape like `tb.json`. Kimi K3 is
   deliberately omitted — the "no OpenRouter row" detail case.
 
-Rows are verbatim from the payloads (TB: synthesized); only the row selection
-is curated.
+The recorded DeepSWE/Artificial Analysis rows preserve the historical
+payload evidence; Terminal-Bench/OpenRouter rows are synthetic as noted above.
+The curated model names and measurements are test evidence, not market advice.
 
 `provenance.json` records the historical snapshot dates from this README for
 DeepSWE/Artificial Analysis and marks Terminal-Bench/OpenRouter as synthetic.
@@ -45,15 +46,15 @@ is separate: reading these files today does not make their measurements current.
 
 ## Model set (7)
 
-| Model | AA rows in fixture | Role |
+| Model | Artificial Analysis rows in fixture | Historical test purpose |
 |---|---|---|
-| GPT-5.6 Luna (OpenAI, closed) | all efforts | cheapest config; the frontier anchor; near-tie Δ story |
+| GPT-5.6 Luna (OpenAI, closed) | all efforts | cheapest config; the frontier anchor; near-tie score/cost story |
 | GPT-5.6 Sol (OpenAI, closed) | all efforts | frontier at medium/high/xhigh; dominated at low |
 | GPT-5.5 (OpenAI, closed) | all efforts | same-effort dominated at low — the replacement-preference case |
 | Claude Opus 5 (Anthropic, closed) | all efforts | top of the frontier path at max |
-| Kimi K3 (Moonshot, open-weights) | low, max | open-weight model; AA-only config at low (DSW `—`) |
-| GPT-5.6 Terra (OpenAI, closed) | **deliberately excluded** | source-only at low: AA `—`, price n/a, no PPI |
-| Qwen3.8 Max (Alibaba) | none in reality | model-level no-AA-row case; source-only identity (DSW xhigh only, renders at xhigh tables in later tickets) |
+| Kimi K3 (Moonshot, open-weights) | low, max | open-weight model; Artificial Analysis-only config at low (DeepSWE unavailable) |
+| GPT-5.6 Terra (OpenAI, closed) | **deliberately excluded** | source-only at low: Intelligence score and task cost unavailable |
+| Qwen3.8 Max (Alibaba) | none in recorded payload | no Artificial Analysis row; source-only identity with DeepSWE at Extra high |
 
 Curation notes:
 
@@ -67,19 +68,21 @@ Curation notes:
 - Rows with no effort setting (non-reasoning AA rows) are kept verbatim; the
   parser ignores them for configs.
 
-## What the subset exercises
+## What the historical subset exercises
 
-- Frontier membership and `*` markers (Luna low is the only frontier config at
-  low effort).
-- Replacement arrows: same-effort preferred (GPT-5.5 low → Sol low: +5.9 pts,
-  save $0.015 — a cross-effort Luna max arrow has strictly higher gain, so the
-  preference is observable); cross-effort fallback (Kimi low → Luna max; Sol
-  low → Luna max; Opus 5 low → Sol medium).
-- ΔAA/Δ$ near-ties (Sol low sits $0.002 above Kimi low) and cheapest-first
-  sort with the unpriced row last.
-- Frontier path line: 12 configs spanning low → max (Luna low … Opus 5 max).
-- DSW/AA grade columns, TB `—`, effort per row, open and closed weights,
-  price n/a / no PPI on the source-only row.
+These are Intelligence comparison cases from the saved evidence, not a claim
+that the same models win under another index or a current live refresh:
+
+- Frontier membership and markers (Luna Low is the only frontier config at
+  Low effort).
+- Replacement arrows: same-effort preferred (GPT-5.5 Low → Sol Low: +5.9
+  points, save $0.015 — a cross-effort Luna Maximum arrow has strictly higher
+  gain, so the preference is observable); cross-effort fallback (Kimi Low →
+  Luna Maximum; Sol Low → Luna Maximum; Opus 5 Low → Sol Medium).
+- Score/task-cost changes near ties (Sol Low sits $0.002 above Kimi Low).
+- Frontier path: 12 configs spanning Low → Maximum (Luna Low … Opus 5 Maximum).
+- Independent source grades, selected measured effort, open and closed
+  weights, and unavailable task cost/value on source-only rows.
 
 ## TB set (ticket 13) — 11 submissions, 4 models
 
@@ -87,13 +90,13 @@ Curation notes:
 |---|---|---|---|---|---|---|
 | …-gpt-5-6-luna-max-codex-cli | codex-cli | GPT-5.6 Luna | max | .757 ± .021 | 07-11 | the recency tie-break winner |
 | …-gpt-5-6-luna-max-junie-cli | junie-cli | GPT-5.6 Luna | max | .757 ± .024 | 07-01 | same score, older — loses the tie |
-| …-gpt-5-6-luna-xhigh-codex-cli | codex-cli | GPT-5.6 Luna | xhigh | .733 ± .021 | 07-05 | xhigh coverage (no table renders xhigh yet) |
+| …-gpt-5-6-luna-xhigh-codex-cli | codex-cli | GPT-5.6 Luna | xhigh | .733 ± .021 | 07-05 | Extra high coverage |
 | …-gpt-5-6-luna-high-codex-cli | codex-cli | GPT-5.6 Luna | high | .701 ± .022 | 06-20 | TB grade 4 at high |
 | …-gpt-5-6-sol-max-codex-cli | codex-cli | GPT-5.6 Sol | max | .769 ± .020 | 07-10 | best TB score at max → grade 5 |
 | …-gpt-5-6-sol-xhigh-codex-cli | codex-cli | GPT-5.6 Sol | xhigh | .745 ± .022 | 07-08 | xhigh coverage |
 | …-gpt-5-6-sol-high-codex-cli | codex-cli | GPT-5.6 Sol | high | .712 ± .023 | 06-25 | TB grade 5 at high |
 | …-gpt-5-5-high-warp | warp | GPT-5.5 | high | .671 ± .025 | 07-02 | best-agent collapse winner (.671 > .664) |
-| …-gpt-5-5-high-codex-cli | codex-cli | GPT-5.5 | high | .664 ± .024 | 06-15 | loses the collapse; no TB max row → `—` at Deep |
+| …-gpt-5-5-high-codex-cli | codex-cli | GPT-5.5 | high | .664 ± .024 | 06-15 | loses the collapse; no Terminal-Bench Maximum row |
 | …-claude-opus-5-max-claude-code | claude-code | Claude Opus 5 | max | .689 ± .019 | 07-09 | TB grade 2 at max |
 | …-claude-opus-5-max-terminus-2 | terminus-2 | Claude Opus 5 | max | .661 ± .020 | 07-03 | loses the collapse |
 
@@ -102,10 +105,10 @@ Notes:
 - Model strings (`model_name`) are the TB v2.1 display style ("GPT-5.6 Luna",
   "GPT-5.5", "Claude Opus 5") and map to AA base slugs via the alias table;
   every TB row joins onto a canonical model — none degrades to `tb:` identity.
-- No TB rows at low/medium (v2.1 doesn't offer them) — the `—` at
-  Chores/Everyday is the honest absence of data, not a dropped row.
-- Kimi K3, Terra and Qwen3.8 Max have no TB rows: Kimi/Terra show `—` in the
-  TB column at every effort; nothing-discarded is asserted on the 11 rows.
+- No Terminal-Bench rows at Low/Medium (v2.1 does not offer them): an
+  unavailable rating at either effort is an honest absence, not a dropped row.
+- Kimi K3, Terra and Qwen3.8 Max have no Terminal-Bench rows. Their ratings
+  remain unavailable at every effort; the fixture retains all 11 submissions.
 
 ## Runtime normalized source contract
 
@@ -151,10 +154,11 @@ headers, fragments and non-pagination query parameters.
 
 The canonical model key is still the Artificial Analysis base slug; UUIDs
 remain per-effort evidence. Existing aliases and Terminal-Bench best-agent,
-then recency collapse are unchanged. Source-only models remain auditable in
-the dataset with no manufactured Artificial Analysis values. Artificial
-Analysis-only catalog models do not enter ranked/advisory inclusion. This
-source slice does not change objective selection, ties, grades or frontiers.
+then recency collapse are unchanged. Recommendation inclusion requires at
+least one DeepSWE or Terminal-Bench rating. Source-only models remain
+auditable with no manufactured Artificial Analysis values. Artificial
+Analysis-only catalog models cannot become recommendations, but their finite
+scores contribute to the selected-index capability-grade reference population.
 
 OpenRouter catalog enrichment remains best effort. Context and input/output
 modalities are optional; malformed or missing catalog data does not fail
@@ -174,7 +178,152 @@ without double-counting or effort splits. This is an evidence/access limit,
 not a claim that the intended feed is impossible. Share cannot affect policy.
 
 Timing is explanatory, not whole-agent task duration or evidence about a
-creator's particular serving endpoint. The Free route's exact prompt preset
-and provider aggregation remain unestablished. This implementation and its
-offline checks do not claim a newly inspected authenticated live response.
+creator's particular serving endpoint. Time to first answer token includes
+thinking; time to first token may stop at a reasoning token. Output tokens per
+second is throughput, and the published 500-answer-token response time is a
+separate estimate. Do not substitute one for another or reconstruct missing
+latency. None filters, weights, orders or breaks ties, and missing timing
+does not disqualify a configuration. The Free route's exact prompt preset and
+provider aggregation remain unestablished. This implementation and its offline
+checks do not claim a newly inspected authenticated live response.
+
+## Runtime role catalog and defaults
+
+[Ticket 35](../../issues/35-eight-role-selection-policy.md) and the
+[approved spec](../../spec.md) define this runtime policy. They supersede
+the historical five-role/unchanged-data-model clauses of ADR 0002; the ADR
+and historical fixture evidence are not rewritten as new measurements.
+
+`llmratings/roles.json` remains the single editable profile file, also
+selectable through `LLM_RATINGS_ROLES`. File order is presentation order:
+
+| Role | Purpose and boundary | Artificial Analysis index | Default objective |
+|---|---|---|---|
+| Explorer | Find and explain existing repository behavior; approach selection belongs to Planner. | Intelligence | Best value |
+| Researcher | Verify external facts and produce sourced findings; not local repository discovery. | Intelligence | Best value |
+| Planner | Choose an approach, decisions and an actionable plan; not implementation or worker management. | Intelligence | Highest capability |
+| Coder | Make and verify changes, including fault diagnosis, UI design, tests and documentation. | Coding | Highest capability |
+| Reviewer | Independently assess changes/proposals, security and second opinions; implementing fixes is separate. | Coding | Highest capability |
+| Coordinator | Divide/delegate work, manage dependencies and combine results; not each worker's implementation. | Agentic | Highest capability |
+| Generalist | Mixed end-to-end work when no specialist fits; not an alias for every specialist. | Intelligence | Best value |
+| Utility | Bounded auxiliary outputs: titles, commit messages, classification and straightforward transformations. | Intelligence | Lowest qualifying price |
+
+Every bundled profile has capability floor **2**. Explorer is the default,
+so default batch output uses **Explorer / Intelligence / Best value**.
+`--role` selects a named profile; unknown names exit 2. The former default
+names have no compatibility aliases. Profiles retain purpose descriptions,
+speed/context/reasoning guidance, selected index, objective and floor.
+Capacity guidance is prose only: it adds no weights, timing rules, fixed
+effort or hidden capability filter. Roles describe purpose, not cheap/fast/
+thorough modes. Utility is not necessarily cheap or easy: a short output can
+require substantial reasoning and source context, and faithful summarization
+or memory extraction is not automatically trivial utility work.
+
+The profile index keys are `intelligence`, `coding` and `agentic`; objective
+keys are `cap`, `ppi` and `price`. Visible objective labels are **Highest
+capability**, **Best value** and **Lowest qualifying price**, not these
+internal keys. Malformed profiles and unknown indexes/objectives produce
+actionable startup errors. A recognized but unsupported combination is
+instead an explicit **unavailable objective**, not a malformed profile.
+
+Intelligence supports all three objectives. Coding/Agentic support Highest
+capability only. An area-index Best value or Lowest qualifying price override
+remains selected and unavailable until changed: no fallback objective, index
+switch or invented denominator. Existing role/objective/capability-filter/
+detail navigation uses the shared policy; this ticket adds no provider
+controls or web interface.
+
+## Eligibility, effort and exact objective order
+
+Select one measured configuration per included model on the role's index.
+Apply the same complete comparison keys within a model and across models:
+
+| Index / objective | Required data at that effort | Comparison keys, in order |
+|---|---|---|
+| Intelligence / Highest capability | Finite Intelligence score; finite non-negative matching Intelligence task cost. | Score descending; task cost ascending; lower effort; canonical model key. |
+| Intelligence / Best value | Finite Intelligence score; finite positive matching task cost; finite usable quotient. | Score / task cost descending; score descending; task cost ascending; lower effort; canonical model key. |
+| Intelligence / Lowest qualifying price | Finite Intelligence score; finite non-negative matching task cost; selected-index grade at least the role floor. | Task cost ascending; score descending; lower effort; canonical model key. |
+| Coding / Highest capability | Finite Coding score; no task cost required. | Coding score descending; lower effort; canonical model key. |
+| Agentic / Highest capability | Finite Agentic score; no task cost required. | Agentic score descending; lower effort; canonical model key. |
+
+Full effort labels and tie order are **Low < Medium < High < Extra high <
+Maximum**. Never rely on fetch order or table section order for exact ties.
+No role fixes an effort, borrows another index's score or combines one
+effort's score with another's cost.
+
+Intelligence cost means **Benchmark task cost** from the matching measured
+Intelligence workload, even under Highest capability. A published zero cost
+can qualify for Highest capability or Lowest qualifying price, but cannot
+provide Best value. Missing, negative or non-finite required costs fail
+eligibility. **Capability per dollar** means Intelligence points divided by
+matching benchmark-task USD, not predicted production-task return. Token list
+prices, blended prices, another benchmark's run costs and invented token
+mixes cannot supply that denominator. There is no established matching
+Coding/Agentic task cost, price tie, value/price objective or cost-based advice.
+
+Source-only and other included models without a qualifying configuration
+stay reachable as **unranked**, with specific reasons and independent source
+evidence. An empty eligible set shows **No qualifying configuration** with
+the role and active constraints; it does not silently relax them. A later
+capability display exclusion is separate from missing measurements.
+
+## Grades, floor and Intelligence advice
+
+Artificial Analysis capability grades use **every finite scored model ×
+measured-effort configuration for the selected index in the refresh**, across
+all efforts and the full catalog, including models outside recommendation
+inclusion and scores without an eligible cost. Compute this population before
+objective eligibility, per-model effort selection or capability display
+filtering. Do not grade per effort or creator, or borrow another index's
+grade. Provider constraints, when added, must not change these reference sets.
+
+Use `tier.grades` on distinct valid values: equal values always share a grade.
+For descending distinct value position `i` (zero-based) among `n` values,
+the higher-is-better grade is `6 - (floor(i * 5 / n) + 1)`. Small sets can
+populate fewer than five grades; empty axes stay unavailable. Recompute on
+refresh. DeepSWE and Terminal-Bench grades remain **source-independent within
+each source's rated effort population**. Terminal-Bench first collapses best
+agent per model × effort, breaking score ties by recency. Never average these
+ratings or different Artificial Analysis indexes into one score.
+
+The floor applies **only** to Lowest qualifying price, including a manual
+override on any Intelligence role. For bundled profiles grade **2 qualifies**
+and grade 1 does not. Highest capability and Best value are floor-free.
+The separate display filter (all grades, grade 5, grade 4 and above) uses the
+objective-selected configuration's selected-index grade; it never selects a
+different effort. Value, output-speed and price grades keep their independent
+valid axes over the unfiltered role-selected rows. Intelligence value requires
+a usable score/positive-cost quotient; price tier uses matching task cost
+with 1 cheapest. Output-speed evidence remains independently available for
+area roles, without inferring area value/price grades. Display filters and
+future provider constraints do not re-bin any of these grades.
+
+Intelligence advice spans all included models' valid scored/priced efforts,
+independent of the role floor and display filter. Preserve the cross-effort
+frontier, strict same-effort replacement preference with cross-effort fallback,
+and up to three strictly cheaper alternatives with Intelligence score at least
+the opened score minus five, sorted by task cost. The Intelligence table puts
+Frontier before Dominated, with full objective order within each section; the
+shared policy's direct objective order is independent of that presentation.
+Coding/Agentic tables use direct score order with no frontier, replacement,
+cheaper-alternative or cross-workload value claim.
+
+## Visible evidence and proxy limits
+
+Use **Artificial Analysis**, **Intelligence score**, **Coding score**,
+**Agentic score**, **Benchmark task cost** and **Capability per dollar** in
+consumer explanations, with the full objective and effort labels above.
+Selected configuration, raw selected-index score/grade and source-specific
+ratings remain distinct and auditable; unavailable data is not a zero.
+OpenRouter share is display-only and cannot affect any score, grade,
+eligibility, objective or tie.
+
+These published scores are **role-selection proxies**. Intelligence is not
+universal task success; Coding is not measured review accuracy; Agentic is
+not proof of multi-agent coordination quality. The complete current Coding/
+Agentic composite formulas remain an unresolved source fact. Do not substitute
+the separate Coding Agent Index or imply that fixture output validates role
+performance. See the [dated metric findings](https://github.com/azarakovskiy/llm-ratings/blob/0c26a6174644ef292b616bf704bf2c72a4043b79/.scratch/llm-ratings/assets/32-aa-role-metric-bases.md)
+for primary-source evidence and its limits. Historical/synthetic fixture
+results and passing offline checks are not current market recommendations.
 
