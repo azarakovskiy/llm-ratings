@@ -1,7 +1,7 @@
 # Preserve index-specific metrics and source provenance
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 ## What to build
@@ -55,12 +55,12 @@ For each Artificial Analysis measured effort, retain independent nullable values
 
 ## Acceptance criteria
 
-- [ ] A real `fetch_all(fixture_path)` followed by `identity.build(aliases, raw)` yields separate Intelligence/Coding/Agentic scores and all four timing values at the correct measured effort, with matching Intelligence task cost, separate list prices, original rows, source URLs and date/version provenance.
-- [ ] A historical fixture example with unequal first-token, first-answer and estimated-response times retains three unequal values. Removing any one optional metric leaves only that metric unavailable; the other metrics and configuration remain intact. Null cost object, null `cost_per_task`, missing values and non-finite values do not crash normalization or turn into zeros.
-- [ ] The same loaded canonical model retains each effort's own score/cost/timing. UUID differences do not split the model; aliases attach source rows; best-agent/recency collapse is unchanged. Source-only rows remain auditable and the Artificial Analysis-only tail is not promoted into ranked/advisory inclusion.
-- [ ] Failure regressions name each failed rating source and produce no partial advice; absent/malformed OpenRouter metadata still yields the rating dataset. Source URLs and persisted provenance contain no API key.
-- [ ] Catalog join cases where `canonical_slug` differs from `id` reach the correct model through the recorded hop. Unknown or unverified share stays unavailable, including top-50 absence; neither missing enrichment nor display-only metadata changes rating values.
-- [ ] Existing batch fixture consumption remains runnable; this task does not change objective selection, tie-breaks, grades or frontier policy. Runtime source documentation states the metric bases and factual access/coverage limits.
+- [x] A real `fetch_all(fixture_path)` followed by `identity.build(aliases, raw)` yields separate Intelligence/Coding/Agentic scores and all four timing values at the correct measured effort, with matching Intelligence task cost, separate list prices, original rows, source URLs and date/version provenance.
+- [x] A historical fixture example with unequal first-token, first-answer and estimated-response times retains three unequal values. Removing any one optional metric leaves only that metric unavailable; the other metrics and configuration remain intact. Null cost object, null `cost_per_task`, missing values and non-finite values do not crash normalization or turn into zeros.
+- [x] The same loaded canonical model retains each effort's own score/cost/timing. UUID differences do not split the model; aliases attach source rows; best-agent/recency collapse is unchanged. Source-only rows remain auditable and the Artificial Analysis-only tail is not promoted into ranked/advisory inclusion.
+- [x] Failure regressions name each failed rating source and produce no partial advice; absent/malformed OpenRouter metadata still yields the rating dataset. Source URLs and persisted provenance contain no API key.
+- [x] Catalog join cases where `canonical_slug` differs from `id` reach the correct model through the recorded hop. Unknown or unverified share stays unavailable, including top-50 absence; neither missing enrichment nor display-only metadata changes rating values.
+- [x] Existing batch fixture consumption remains runnable; this task does not change objective selection, tie-breaks, grades or frontier policy. Runtime source documentation states the metric bases and factual access/coverage limits.
 
 ## Verification
 
@@ -80,3 +80,65 @@ No ranking-policy change, role catalog change, provider chooser, browser UI, new
 - [Historical OpenRouter display intent and permaslug evidence limits](../map.md#decisions-so-far), specifically the settled display-only intent and canonical-slug join entries. These are historical summaries with an unavailable original source ticket, not newly verified feed coverage.
 - [Define quick selection by major model provider — approved Answer](29-provider-quick-selection.md#answer)
 - [Redesign the provider-selection prototype for readable model advice — live Provider lens approval](33-redesign-provider-selection-prototype.md#answer); the approved visual layout is implemented by later tasks, not copied into this source slice.
+
+## Answer
+
+Resolved 2026-10-31 on `implement/t34`. The existing fetch/identity pipeline now
+retains separate measured-effort index scores, matching Intelligence task cost,
+four distinct timing values and normalized input/output/cache list prices.
+Unavailable optional values stay `None`; published zeros and wholesale raw rows
+are preserved. No recommendation policy, role or browser controls changed.
+
+### Downstream contract
+
+- `Rating.score` remains Intelligence for Artificial Analysis. New
+  `coding_score`, `agentic_score`, `first_answer_seconds`,
+  `first_token_seconds`, `response_500_tokens_seconds` and `pricing` complement
+  existing matching `cost` and output-throughput `speed`; there is no duplicate
+  compatibility metric store. Detail consumes normalized list prices.
+- `fetch_all` adds `_provenance`; `Dataset.provenance` exposes fixture/live mode,
+  actual UTC fetch time, source URLs, available labelled source dates and
+  historical fixture snapshot/synthetic evidence. Artificial Analysis pages
+  retain row ranges, URLs and reported versions; each rating carries its own
+  `source_url` and `intelligence_index_version`. Terminal-Bench keeps individual
+  submission URLs, agent and recency date.
+- `Dataset.openrouter_models` resolves a supplied catalog `canonical_slug`
+  through that row's `id` and the existing alias/model join. Joined original
+  catalog rows stay on `Model.catalog_rows`; malformed optional catalog data
+  cannot invalidate ratings. `Model.token_share_30d` stays explicitly unavailable,
+  including isolated illustrative totals and catalog/top-50 absence.
+- [Runtime source contract](../fixtures/main/README.md#runtime-normalized-source-contract)
+  documents fields, units, timing distinctions, source/date limits and the
+  unverified OpenRouter feed/coverage boundary. `provenance.json` records only
+  the fixture history already documented there, not new live-source evidence.
+
+### Exercised verification
+
+- `PYTHONPATH=tests python3 -m unittest test_cli.SourceContract test_cli.TerminalBench test_cli.LiveAcquisition test_cli.FixtureFailure test_cli.MissingKey`:
+  **34 tests passed**. This includes 11 new source-contract cases, real temporary
+  payloads, independent missing/non-finite/zero metrics, source-only and
+  Artificial Analysis-only identities, distinct permaslug/ID joins, malformed
+  optional enrichment, named source parsing/fetch failures without partial
+  advice, and the existing local HTTP origin's pagination. The new paginated
+  consumer retained separate page-reported versions and URLs without persisting
+  the API key or headers.
+- A separate throwaway Python process used real saved-fixture
+  `fetch_all`/`identity.build` outside unittest: **passed**. Luna Low retained
+  Intelligence/Coding/Agentic **33.3/44.2/25.4**, task cost **$0.0088** and
+  throughput **146.91**; Maximum retained **51.2/71.4/45.6**, **$0.0473** and
+  **180.51**. Kimi Low retained first-token/first-answer/estimated-response
+  **3.45/60.66/74.96 seconds**, task cost **$0.2429**, not suite expenditure
+  **$283.30**. It printed the original IDs, source URLs, version **4.1**,
+  historical snapshot **2026-08-05**, actual fetch timestamp
+  **2026-10-31T15:52:16.303687+00:00**, DeepSWE generated date and the synthetic
+  Terminal-Bench submission's **2026-07-11** date and individual URL.
+- `LLM_RATINGS_AA_API_KEY=dummy python3 -m llmratings --fixtures .scratch/llm-ratings/fixtures/main`
+  with non-TTY input/output: **exit 0**, Artificial Analysis attribution and the
+  unchanged Chores/price table and frontier path observed.
+- `make test`: **87 tests passed**. `make lint`: **exit 0**. Each repository
+  command ran once after implementation. The integration prerequisite merge
+  returned **Already up to date**.
+
+All acquisition checks were offline fixtures or the local HTTP origin. No new
+authenticated external response, current market measurement, area-index cost
+basis or verified OpenRouter 30-day share is claimed.

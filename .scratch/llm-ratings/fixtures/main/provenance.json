@@ -1,0 +1,8 @@
+{
+  "sources": {
+    "deepswe": {"snapshot_date": "2026-08-05", "synthetic": false},
+    "aa": {"snapshot_date": "2026-08-05", "synthetic": false},
+    "tb": {"snapshot_date": null, "synthetic": true},
+    "or": {"snapshot_date": null, "synthetic": true}
+  }
+}
