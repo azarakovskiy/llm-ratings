@@ -9,10 +9,13 @@ import math
 from pathlib import Path
 
 from .identity import EFFORTS, best_tb
-from .rank import aa_points, dominator, frontier_set, pareto
+from .rank import aa_points, alternatives, dominator, frontier_set, pareto
 from .tier import grades
 
 OBJECTIVES = ("cap", "ppi", "price")
+VIEW_LABEL = {"table": "Model table", "picks": "Provider picks"}
+PROVIDER_SHORTCUTS = ("OpenAI", "Anthropic", "Google", "DeepSeek", "xAI")
+CAPABILITY_FILTERS = (None, 5, 4)
 
 OBJECTIVE_LABEL = {"cap": "Highest capability", "ppi": "Best value",
                    "price": "Lowest qualifying price"}
@@ -126,9 +129,16 @@ def _included(ds):
     return {r.model_key for r in ds.ratings if r.source in ("deepswe", "tb")}
 
 
-def _pts(ds):
+def creators(ds):
+    """Every known catalog creator, independent of inclusion and eligibility."""
+    return sorted({m.provider for m in ds.models.values() if m.provider != "—"},
+                  key=str.casefold)
+
+
+def _pts(ds, provider):
     included = _included(ds)
-    return [p for p in aa_points(ds.ratings) if p[0] in included]
+    return [p for p in aa_points(ds.ratings) if p[0] in included
+            and (provider is None or ds.models[p[0]].provider == provider)]
 
 
 def _league_key(configuration, objective, index):
@@ -169,7 +179,7 @@ def _select(configs, index, objective, floor, capability):
     return min(scored, key=lambda r: _league_key(r, objective, index)), None
 
 
-def query(ds, role, objective=None, min_grade=None):
+def query(ds, role, objective=None, min_grade=None, provider=None, view="table"):
     """One shared consumer result, in direct objective order.
 
     Capability references precede eligibility. Selected-row axis grades precede
@@ -177,7 +187,16 @@ def query(ds, role, objective=None, min_grade=None):
     records passed measurement requirements but failed the display constraint.
     Intelligence advisory points stay floor-free and display-filter-free.
     """
+    override = objective
     objective = objective or role["objective"]
+    if view not in VIEW_LABEL:
+        raise ValueError(f"unknown view: {view!r}")
+    if min_grade not in CAPABILITY_FILTERS:
+        raise ValueError(f"unknown capability display filter: {min_grade!r}")
+    catalog_creators = creators(ds)
+    if provider is not None and provider not in (*catalog_creators, *PROVIDER_SHORTCUTS):
+        raise ValueError(f"unknown provider: {provider!r}")
+    provider_label = provider or "All providers"
     if objective not in OBJECTIVES:
         raise ValueError(f"unknown objective: {objective!r}")
     index = role["index"]
@@ -187,7 +206,14 @@ def query(ds, role, objective=None, min_grade=None):
         f"Unavailable objective: {OBJECTIVE_LABEL[objective]} for "
         f"{INDEX_LABEL[index]}. No matching {INDEX_LABEL[index]} benchmark "
         "task cost is established; select Highest capability.")
-    pts = _pts(ds) if supported and index == "intelligence" else []
+    scope = dict(kind=("global" if provider is None else "provider")
+                 if supported and index == "intelligence" else "unavailable",
+                 provider=provider,
+                 label=("Global comparison — All providers" if provider is None else
+                        f"Creator-local comparison — {provider}")
+                 if supported and index == "intelligence" else
+                 f"Cost-based advice unavailable for {INDEX_LABEL[index]}")
+    pts = _pts(ds, provider) if supported and index == "intelligence" else []
     frontier = frontier_set(pts)
     measurements, configurations = {}, {}
     for r in ds.ratings:
@@ -231,6 +257,8 @@ def query(ds, role, objective=None, min_grade=None):
             speed=sel.speed, first_answer_seconds=sel.first_answer_seconds,
             frontier=(key, effort) in frontier if intelligence else None,
             dom=dominator(pts, key, effort, score, sel.cost) if intelligence else None,
+            alternatives=alternatives(pts, score, sel.cost) if intelligence else [],
+            advisory_scope=scope,
         ))
     value_grades = grades([r["ppi"] for r in rows if r["ppi"] is not None])
     speed_grades = grades([r["speed"] for r in rows if _finite(r["speed"])])
@@ -246,17 +274,71 @@ def query(ds, role, objective=None, min_grade=None):
         excluded = [dict(r, reason=f"Capability display requires grade ≥ {min_grade}")
                     for r in rows if r["grade"] < min_grade]
         rows = [r for r in rows if r["grade"] >= min_grade]
+    if provider is not None:
+        rows = [r for r in rows if r["provider"] == provider]
+        excluded = [r for r in excluded if r["provider"] == provider]
+        unranked = [r for r in unranked if r["provider"] == provider]
     status = "unavailable_objective" if unavailable else "ok" if rows else "no_qualifying"
     constraint = ("All capability grades" if min_grade is None else
                   f"capability grade ≥ {min_grade}")
-    if objective == "price":
+    if objective == "price" and index == "intelligence":
         constraint += f"; price floor grade ≥ {role['floor']}"
-    reason = unavailable
+    selected = (f"{role['name']} · {INDEX_LABEL[index]} · "
+                f"{OBJECTIVE_LABEL[objective]} · {provider_label} · {constraint}")
+    reason = f"{unavailable} — {selected}" if unavailable else None
     if status == "no_qualifying":
-        reason = (f"No qualifying configuration — {role['name']} · "
-                  f"{INDEX_LABEL[index]} · {OBJECTIVE_LABEL[objective]} · {constraint}")
-    return dict(index=index, objective=objective, status=status, reason=reason,
-                rows=rows, unranked=unranked, excluded=excluded, points=pts)
+        reason = f"No qualifying configuration — {selected}"
+    if index == "intelligence":
+        sections = [
+            dict(label=f"Frontier — no strict Intelligence score/task-cost improvement "
+                 f"· {scope['label']}", rows=[r for r in rows if r["frontier"]]),
+            dict(label=f"Dominated — strict replacement · {scope['label']}",
+                 rows=[r for r in rows if not r["frontier"]]),
+        ] if supported else []
+        for section in sections:
+            _add_deltas(section["rows"])
+    else:
+        sections = [dict(label=f"Direct {INDEX_LABEL[index]} score order", rows=rows)]
+    table_rows = [r for section in sections for r in section["rows"]]
+    by_creator = {name: [] for name in ([provider] if provider else catalog_creators)}
+    for row in rows:
+        if row["provider"] in by_creator:
+            by_creator[row["provider"]].append(row)
+    picks, without_picks = [], []
+    for name, candidates in by_creator.items():
+        missing = [r for r in unranked if r["provider"] == name]
+        filtered = [r for r in excluded if r["provider"] == name]
+        group = dict(provider=name, primary=candidates[0] if candidates else None,
+                     runner_up=candidates[1] if len(candidates) > 1 else None,
+                     reason=None, unranked=missing, excluded=filtered)
+        if candidates:
+            if len(candidates) == 1:
+                group["reason"] = "No qualifying runner-up"
+            picks.append(group)
+        else:
+            why = unavailable or "; ".join(sorted(
+                {r["reason"] for r in missing + filtered})) or (
+                "No models meet the inclusion boundary: at least one "
+                "DeepSWE or Terminal-Bench rating is required")
+            group["reason"] = f"No qualifying configuration — {name} · {why}"
+            without_picks.append(group)
+    recoveries = []
+    if provider is not None:
+        recoveries.append(dict(action="all_providers", label="All providers"))
+    if min_grade is not None:
+        recoveries.append(dict(action="clear_capability", label="Clear capability filter"))
+    if not supported:
+        recoveries.append(dict(action="highest_capability", label="Highest capability"))
+    if override is not None:
+        recoveries.append(dict(action="role_default", label="Use role default"))
+    return dict(role=role, index=index, objective=objective, objective_override=override,
+                provider=provider, provider_label=provider_label, min_grade=min_grade,
+                view=view, status=status, reason=reason, advisory_scope=scope,
+                rows=rows, unranked=unranked, excluded=excluded, points=pts,
+                frontier_path=pareto(pts), sections=sections, table_rows=table_rows,
+                picks=picks, providers_without_picks=without_picks,
+                creators=catalog_creators, shortcuts=PROVIDER_SHORTCUTS,
+                recovery_actions=recoveries)
 
 
 def _cell(value, width):
@@ -287,24 +369,29 @@ def _fmt_row(row, intelligence):
     return text
 
 
-def table(ds, role, objective=None, min_grade=None):
+def table(ds, role, objective=None, min_grade=None, provider=None, *, result=None):
     """Render the shared result; Intelligence sections do not define pick order."""
-    result = query(ds, role, objective, min_grade)
+    if result is None:
+        result = query(ds, role, objective, min_grade, provider)
+    role = result["role"]
     index, objective = result["index"], result["objective"]
     intelligence = index == "intelligence"
-    floor = f" · capability floor ≥ {role['floor']}" if objective == "price" else ""
+    floor = (f" · capability floor ≥ {role['floor']}"
+             if objective == "price" and intelligence else "")
     lines = [f"{role['name']} — {INDEX_LABEL[index]} — "
              f"{OBJECTIVE_LABEL[objective]}{floor}",
              f"{role['name']}: {role['description']}",
              f"Capacity guidance: {role['capacity']}",
-             INDEX_NOTE[index]]
+             INDEX_NOTE[index],
+             f"Provider selection: {result['provider_label']} · "
+             f"{result['advisory_scope']['label']}"]
     if result["reason"]:
         lines.extend(("", result["reason"]))
     rows = result["rows"]
     if result["status"] != "unavailable_objective" and intelligence:
         path = " → ".join(
             f"{ds.models[m].name} {EFFORT_LABEL[e]} {score:g} @ {fmt_money(cost)}"
-            for m, e, cost, score in pareto(result["points"]))
+            for m, e, cost, score in result["frontier_path"])
         lines.extend(("", f"frontier: {path or '—'}"))
     displayed = []
     if rows:
@@ -316,21 +403,11 @@ def table(ds, role, objective=None, min_grade=None):
                        f"{'Score change':>12} {'Task cost change':>16}")
         header += f" {'Time to first answer token':>26} {'Output tokens per second':>24}"
         lines.extend(("", header))
-        if intelligence:
-            sections = [
-                ("Frontier — no strict improvement in Intelligence score/task cost",
-                 [r for r in rows if r["frontier"]]),
-                ("Dominated — strict replacement within all included models",
-                 [r for r in rows if not r["frontier"]]),
-            ]
-        else:
-            sections = [(f"Direct {INDEX_LABEL[index]} score order", rows)]
-        for title, section in sections:
-            if not section:
+        for section in result["sections"]:
+            if not section["rows"]:
                 continue
-            lines.append(title)
-            if intelligence:
-                _add_deltas(section)
+            lines.append(section["label"])
+            section = section["rows"]
             for row in section:
                 lines.append(_fmt_row(row, intelligence))
                 if row["dom"]:
@@ -344,18 +421,9 @@ def table(ds, role, objective=None, min_grade=None):
     return lines, displayed
 
 
-def render(ds, role, objective=None, min_grade=None):
-    lines, _ = table(ds, role, objective, min_grade)
+def render(ds, role, objective=None, min_grade=None, provider=None, *, result=None):
+    lines, _ = table(ds, role, objective, min_grade, provider, result=result)
     return lines
-
-
-def _alternatives(ds, row):
-    if row["index"] != "intelligence":
-        return []
-    cands = [(m, e, c, score) for m, e, c, score in _pts(ds)
-             if c < row["cost"] and score >= row["score"] - 5]
-    cands.sort(key=lambda p: (p[2], -p[3], EFFORTS.index(p[1]), p[0]))
-    return cands[:3]
 
 
 def detail(ds, row, role, objective=None):
@@ -367,7 +435,7 @@ def detail(ds, row, role, objective=None):
     label = EFFORT_LABEL[effort]
     out = [f"{model.name} {label} — {model.provider}",
            f"{role['name']} · {INDEX_LABEL[index]} · {OBJECTIVE_LABEL[objective]}",
-           INDEX_NOTE[index], ""]
+           INDEX_NOTE[index], row["advisory_scope"]["label"], ""]
     graded = []
     for source, name, grade in (
             ("deepswe", "DeepSWE", row["dsw"]),
@@ -453,11 +521,10 @@ def detail(ds, row, role, objective=None):
             out.append(f"sources disagree ({lo[0]} {lo[1]} vs {hi[0]} {hi[1]} "
                        f"at {label}): different benchmark populations, not "
                        "measurements to average")
-    alternatives = _alternatives(ds, row)
-    if alternatives:
+    if row["alternatives"]:
         out.extend(("", "Cheaper alternatives · within 5 Intelligence points, "
-                    "sorted by Benchmark task cost:"))
-        for other, other_effort, cost, score in alternatives:
+                    f"sorted by Benchmark task cost · {row['advisory_scope']['label']}:"))
+        for other, other_effort, cost, score in row["alternatives"]:
             out.append(f"  {ds.models[other].name} {EFFORT_LABEL[other_effort]} — "
                        f"{fmt_money(cost)}, score change {score - row['score']:+.1f}")
     return out

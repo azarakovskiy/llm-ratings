@@ -6,6 +6,8 @@ area indexes, timing and capability floors never enter its comparisons.
 
 import math
 
+from .identity import EFFORTS
+
 
 def aa_points(ratings):
     """Every finite Intelligence configuration with valid matching task cost."""
@@ -52,3 +54,10 @@ def dominator(pts, key, effort, ii, cost):
                 yield (ii2 - ii, cost - c2, m2, e2, ii2, c2)
 
     return best(list(cands(True))) or best(list(cands(False)))
+
+
+def alternatives(pts, score, cost):
+    """Up to three strictly cheaper Intelligence points within five points."""
+    candidates = [p for p in pts if p[2] < cost and p[3] >= score - 5]
+    candidates.sort(key=lambda p: (p[2], -p[3], EFFORTS.index(p[1]), p[0]))
+    return candidates[:3]

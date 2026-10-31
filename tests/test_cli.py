@@ -21,6 +21,7 @@ sys.path.insert(0, str(REPO))  # in-process `import llmratings` for render tests
 FIXTURES = REPO / ".scratch" / "llm-ratings" / "fixtures" / "main"
 
 from llmratings import fetch, identity, render  # noqa: E402  (sys.path setup above)
+from llmratings.session import Session  # noqa: E402
 ROLES = render.load_roles(REPO / "llmratings" / "roles.json")
 
 
@@ -185,11 +186,11 @@ class FixtureFailure(unittest.TestCase):
 
 
 def aa_config(key, effort="low", score=50, cost=1, coding=None, agentic=None,
-              speed=100):
-    """A real source row, with independent measured index values."""
+              speed=100, provider="Acme"):
+    """A synthetic source-shaped row, with independent index measurements."""
     return {
         "id": f"{key}-{effort}", "name": f"{key} ({effort})",
-        "slug": f"{key}-{effort}", "model_creator": {"name": "Acme"},
+        "slug": f"{key}-{effort}", "model_creator": {"name": provider},
         "evaluations": {"artificial_analysis_intelligence_index": score,
                         "artificial_analysis_coding_index": coding,
                         "artificial_analysis_agentic_index": agentic},
@@ -200,7 +201,7 @@ def aa_config(key, effort="low", score=50, cost=1, coding=None, agentic=None,
 
 
 class SelectionPolicy(unittest.TestCase):
-    """Policy results consumed by batch/session, from real temporary payloads."""
+    """Policy consumers from synthetic temporary source payloads."""
 
     def dataset(self, configs, included=None, tb=None):
         td = tempfile.TemporaryDirectory()
@@ -515,9 +516,15 @@ class SelectionPolicy(unittest.TestCase):
         for name in ("Planner", "Explorer", "Utility", "Coder", "Coordinator"):
             role = self.role(name)
             def observed(ds):
-                return [(r["key"], r["effort"], r["score"], r["grade"],
-                         r["dsw"], r["tb"], r["value"], r["price_tier"])
-                        for r in render.query(ds, role)["rows"]]
+                result = render.query(ds, role)
+                rows = [(r["key"], r["effort"], r["score"], r["grade"],
+                         r["dsw"], r["tb"], r["value"], r["price_tier"],
+                         r["dom"], r["alternatives"])
+                        for r in result["rows"]]
+                picks = [(g["provider"], g["primary"]["key"],
+                          g["runner_up"]["key"] if g["runner_up"] else None)
+                         for g in result["picks"]]
+                return rows, picks, result["frontier_path"], result["shortcuts"]
             self.assertEqual(observed(original), observed(changed))
 
     def test_unsupported_area_objectives_and_empty_results_are_explicit(self):
@@ -564,6 +571,173 @@ class SelectionPolicy(unittest.TestCase):
         self.assertNotIn("near-four Low —", detail)
         self.assertEqual({r["key"] for r in strict["unranked"]},
                          {"near-one", "near-two", "near-three", "near-four"})
+
+    def test_provider_picks_use_direct_order_not_frontier_sections(self):
+        ds = self.dataset([
+            aa_config("winner", score=100, cost=5),
+            aa_config("winner", "high", score=100, cost=6),
+            aa_config("second", "max", score=99, cost=10),
+            aa_config("cheap", score=80, cost=1),
+            aa_config("only", score=90, cost=2, provider="Other"),
+            aa_config("catalog-only", score=200, cost=0, provider="Catalog"),
+        ], included=["winner", "second", "cheap", "only"])
+        result = render.query(ds, self.role("Planner"), view="picks")
+        groups = {g["provider"]: g for g in result["picks"]}
+        self.assertEqual([(groups["Acme"][slot]["key"],
+                           groups["Acme"][slot]["effort"])
+                          for slot in ("primary", "runner_up")],
+                         [("winner", "low"), ("second", "max")])
+        self.assertFalse(groups["Acme"]["runner_up"]["frontier"])
+        self.assertEqual([r["key"] for r in result["table_rows"]],
+                         ["winner", "only", "cheap", "second"])
+        self.assertEqual(groups["Other"]["primary"]["key"], "only")
+        self.assertIsNone(groups["Other"]["runner_up"])
+        self.assertEqual(groups["Other"]["reason"], "No qualifying runner-up")
+        self.assertEqual(result["creators"], ["Acme", "Catalog", "Other"])
+        self.assertEqual(result["shortcuts"],
+                         ("OpenAI", "Anthropic", "Google", "DeepSeek", "xAI"))
+        self.assertEqual([g["provider"] for g in result["providers_without_picks"]],
+                         ["Catalog"])
+        self.assertIn("inclusion", result["providers_without_picks"][0]["reason"])
+        scoped = render.query(ds, self.role("Planner"), provider="Acme", view="picks")
+        self.assertEqual([g["provider"] for g in scoped["picks"]], ["Acme"])
+        self.assertEqual({r["provider"] for r in scoped["table_rows"]}, {"Acme"})
+        empty = render.query(ds, self.role("Planner"), provider="Google")
+        self.assertEqual(empty["picks"], [])
+        self.assertEqual(empty["status"], "no_qualifying")
+        self.assertIn("Google", empty["reason"])
+        self.assertEqual(empty["creators"], result["creators"])
+        self.assertEqual(empty["shortcuts"], result["shortcuts"])
+
+    def test_creator_scope_keeps_nonselected_filter_and_floor_free_advice(self):
+        ds = self.dataset([
+            aa_config("target", "max", score=80, cost=10),
+            aa_config("peer", "max", score=81, cost=9),
+            aa_config("peer", "low", score=100, cost=11),
+            aa_config("cross", score=90, cost=1),
+            aa_config("near-one", score=79, cost=2),
+            aa_config("near-two", "high", score=78, cost=3),
+            aa_config("near-three", "medium", score=77, cost=4),
+            aa_config("near-four", "max", score=76, cost=5),
+            aa_config("too-low", score=74, cost=0.1),
+            aa_config("outsider", "max", score=100, cost=0.5, provider="Other"),
+            aa_config("catalog-only", score=100, cost=0, provider="Catalog"),
+        ], included=["target", "peer", "cross", "near-one", "near-two",
+                     "near-three", "near-four", "too-low", "outsider"])
+        global_result = render.query(ds, self.role("Planner"))
+        local = render.query(ds, self.role("Planner"), provider="Acme")
+        global_rows = {r["key"]: r for r in global_result["rows"]}
+        rows = {r["key"]: r for r in local["rows"]}
+        self.assertEqual(local["advisory_scope"]["kind"], "provider")
+        self.assertEqual(local["advisory_scope"]["provider"], "Acme")
+        self.assertEqual(global_result["advisory_scope"]["kind"], "global")
+        self.assertEqual(rows["peer"]["effort"], "low")
+        self.assertTrue(rows["peer"]["frontier"])
+        self.assertFalse(global_rows["peer"]["frontier"])
+        self.assertEqual(rows["target"]["dom"], (1, 1, "peer", "max", 81, 9))
+        self.assertEqual(global_rows["target"]["dom"],
+                         (20, 9.5, "outsider", "max", 100, 0.5))
+        self.assertEqual(rows["target"]["alternatives"], [
+            ("cross", "low", 1, 90), ("near-one", "low", 2, 79),
+            ("near-two", "high", 3, 78)])
+        self.assertEqual(global_rows["target"]["alternatives"], [
+            ("outsider", "max", 0.5, 100), ("cross", "low", 1, 90),
+            ("near-one", "low", 2, 79)])
+        self.assertEqual(local["frontier_path"], [
+            ("too-low", "low", 0.1, 74), ("cross", "low", 1, 90),
+            ("peer", "low", 11, 100)])
+        self.assertEqual(global_result["frontier_path"],
+                         [("too-low", "low", 0.1, 74), ("outsider", "max", 0.5, 100)])
+        strict = render.query(ds, self.role("Utility", floor=5),
+                              min_grade=5, provider="Acme")
+        self.assertEqual(strict["points"], local["points"])
+        self.assertEqual(strict["frontier_path"], local["frontier_path"])
+        self.assertNotIn("catalog-only", {p[0] for p in local["points"]})
+        detail = "\n".join(render.detail(ds, rows["target"], self.role("Planner")))
+        self.assertIn("Creator-local comparison — Acme", detail)
+        self.assertIn("peer Maximum", detail)
+        self.assertIn("near-two High", detail)
+        self.assertNotIn("outsider", detail)
+        restored = render.query(ds, self.role("Planner"), provider=None)
+        self.assertEqual(restored["frontier_path"], global_result["frontier_path"])
+        self.assertEqual(restored["rows"], global_result["rows"])
+
+    def test_provider_display_exclusions_keep_selected_effort_and_measurement_reasons(self):
+        ds = self.dataset([
+            aa_config("cheap-effort", "low", score=10, cost=1),
+            aa_config("cheap-effort", "max", score=100, cost=100),
+            aa_config("unpriced", score=90, cost=None),
+            aa_config("other", score=50, cost=1, provider="Other"),
+            aa_config("catalog", score=200, cost=1, provider="Catalog"),
+        ], included=["cheap-effort", "unpriced", "other", "source-only"])
+        broad = render.query(ds, self.role())
+        narrow = render.query(ds, self.role(), provider="Acme", min_grade=5)
+        self.assertEqual(narrow["status"], "no_qualifying")
+        self.assertEqual(narrow["rows"], [])
+        self.assertEqual(narrow["picks"], [])
+        self.assertEqual([(r["key"], r["effort"]) for r in narrow["excluded"]],
+                         [("cheap-effort", "low")])
+        excluded = narrow["excluded"][0]
+        self.assertEqual(excluded["configuration"].effort, "low")
+        self.assertIn("Capability display", excluded["reason"])
+        self.assertEqual([r["key"] for r in narrow["unranked"]], ["unpriced"])
+        self.assertIn("task cost", narrow["unranked"][0]["reason"])
+        self.assertIsNone(narrow["unranked"][0]["configuration"])
+        self.assertIn("dsw:source-only", {r["key"] for r in broad["unranked"]})
+        self.assertEqual({r["provider"] for r in narrow["excluded"] + narrow["unranked"]},
+                         {"Acme"})
+        self.assertIn("Explorer", narrow["reason"])
+        self.assertIn("Acme", narrow["reason"])
+        self.assertIn("grade ≥ 5", narrow["reason"])
+        reasons = narrow["providers_without_picks"][0]
+        self.assertIn("Capability display", reasons["reason"])
+        self.assertIn("task cost", reasons["reason"])
+        self.assertEqual(reasons["excluded"], narrow["excluded"])
+        selected = next(r for r in broad["rows"] if r["key"] == "cheap-effort")
+        for field in ("configuration", "score", "grade", "dsw", "tb",
+                      "value", "spd", "price_tier"):
+            self.assertEqual(excluded[field], selected[field])
+        self.assertEqual(narrow["creators"], ["Acme", "Catalog", "Other"])
+        self.assertEqual(narrow["shortcuts"], broad["shortcuts"])
+
+    def test_scoped_area_picks_never_expose_intelligence_cost_advice(self):
+        ds = self.dataset([
+            aa_config("alpha", "max", score=100, cost=0, coding=50, agentic=60),
+            aa_config("alpha", "low", score=1, cost=100, coding=50, agentic=60),
+            aa_config("beta", "low", score=100, cost=0, coding=50, agentic=60),
+            aa_config("other", score=100, cost=0, coding=100, agentic=100,
+                      provider="Other"),
+        ])
+        for name in ("Coder", "Coordinator"):
+            result = render.query(ds, self.role(name), provider="Acme", view="picks")
+            self.assertEqual(self.picks(result), [("alpha", "low"), ("beta", "low")])
+            self.assertEqual(result["points"], [])
+            self.assertEqual(result["frontier_path"], [])
+            self.assertEqual(result["advisory_scope"]["kind"], "unavailable")
+            self.assertEqual(result["picks"][0]["primary"]["key"], "alpha")
+            self.assertEqual(result["picks"][0]["runner_up"]["key"], "beta")
+            for row in result["rows"]:
+                self.assertIsNone(row["frontier"])
+                self.assertIsNone(row["dom"])
+                self.assertIsNone(row["cost"])
+                self.assertEqual(row["alternatives"], [])
+            for objective in ("ppi", "price"):
+                unavailable = render.query(ds, self.role(name), objective,
+                                           min_grade=4, provider="Acme", view="picks")
+                self.assertEqual(unavailable["status"], "unavailable_objective")
+                self.assertEqual(unavailable["objective"], objective)
+                self.assertEqual(unavailable["min_grade"], 4)
+                self.assertEqual(unavailable["provider"], "Acme")
+                self.assertEqual(unavailable["view"], "picks")
+                self.assertEqual(unavailable["picks"], [])
+                self.assertIn(name, unavailable["reason"])
+                self.assertIn("Acme", unavailable["reason"])
+                self.assertIn("grade ≥ 4", unavailable["reason"])
+                self.assertEqual({r["key"] for r in unavailable["unranked"]},
+                                 {"alpha", "beta"})
+                self.assertEqual({r["action"] for r in unavailable["recovery_actions"]},
+                                 {"all_providers", "clear_capability",
+                                  "highest_capability", "role_default"})
 
     def test_unmeasured_rows_do_not_shape_configuration_grades(self):
         unmeasured = aa_config("unmeasured", score=999, coding=999, agentic=999)
@@ -704,6 +878,53 @@ class SavedPolicy(unittest.TestCase):
         self.assertAlmostEqual(kimi["cost_change"], -0.3773)
         self.assertAlmostEqual(gpt["score_change"], -2.3)
         self.assertIsNone(sol["score_change"])
+
+    def test_real_shared_session_projections_and_batch_keep_scope_and_grades(self):
+        state = Session(self.ds, ROLES)
+        table = state.query()
+        self.assertEqual(table["role"]["name"], "Explorer")
+        self.assertEqual(table["view"], "table")
+        self.assertEqual(table["provider_label"], "All providers")
+        self.assertEqual([(r["key"], r["effort"]) for r in table["table_rows"]][:1],
+                         [("gpt-5-6-luna", "low")])
+        picks = state.set_view("picks")
+        openai = next(g for g in picks["picks"] if g["provider"] == "OpenAI")
+        self.assertEqual([(openai[slot]["key"], openai[slot]["effort"])
+                          for slot in ("primary", "runner_up")],
+                         [("gpt-5-6-luna", "low"), ("gpt-5-6-sol", "low")])
+        self.assertEqual({g["provider"] for g in picks["picks"]},
+                         {"OpenAI", "Anthropic", "Kimi"})
+        self.assertEqual({r["key"] for r in picks["unranked"]},
+                         {"dsw:qwen3-8-max", "dsw:gpt-5-6-terra"})
+        state.set_role("Planner")
+        broad = state.query()
+        baseline = {r["key"]: r for r in broad["rows"]}
+        narrow = state.set_provider("OpenAI")
+        self.assertEqual(narrow["advisory_scope"]["kind"], "provider")
+        self.assertEqual(narrow["view"], "picks")
+        openai = narrow["picks"][0]
+        self.assertEqual([(openai[slot]["key"], openai[slot]["effort"])
+                          for slot in ("primary", "runner_up")],
+                         [("gpt-5-6-sol", "max"), ("gpt-5-5", "xhigh")])
+        filtered = state.set_min_grade(5)
+        for row in filtered["rows"] + filtered["excluded"]:
+            for field in ("configuration", "score", "grade", "dsw", "tb",
+                          "value", "spd", "price_tier"):
+                self.assertEqual(row[field], baseline[row["key"]][field])
+        self.assertEqual(filtered["creators"], broad["creators"])
+        self.assertEqual(filtered["shortcuts"], broad["shortcuts"])
+        lines, displayed = render.table(self.ds, state.role, result=filtered)
+        self.assertEqual(displayed, filtered["table_rows"])
+        self.assertIn("Provider selection: OpenAI", "\n".join(lines))
+        state.set_min_grade(None)
+        restored = state.recover("all_providers")
+        self.assertEqual(restored["frontier_path"], broad["frontier_path"])
+        self.assertEqual(restored["rows"], broad["rows"])
+        self.assertIs(state.ds, self.ds)
+        batch = run_fixtures(None, "--role", "Explorer")
+        self.assertEqual(batch.returncode, 0, batch.stderr)
+        self.assertIn("Provider selection: All providers", batch.stdout)
+        self.assertIn("Global comparison — All providers", batch.stdout)
 
     def test_same_effort_replacement_precedes_greater_cross_effort_gain(self):
         rows = {r["key"]: r for r in render.query(

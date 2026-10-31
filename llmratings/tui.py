@@ -6,9 +6,9 @@ frames rendered as a staggered mess, while the identical bytes through a
 non-TTY pipe aligned perfectly — the emulator mangles `\n`-only frames with
 no cursor addressing. The fix is to stop hand-rolling, not to adjust columns
 (ADR 0001). Ticket 17 replaces the I/O shell with Textual: `render.py`
-stays the single source of table text (batch and TUI render identical
-lines), `Session` keeps the state machine, and the `LlmRatings` App just
-draws `Session.frame()` and routes keys into `Session.key()`.
+stays the single source of table text. The shared `session.Session` owns
+advice choices; this adapter adds terminal navigation and `frame()`/`key()`.
+The `LlmRatings` App only draws frames and routes keys.
 
 Keymap (spec §6): ←/→ or 1–N role nav (N = roles.json length), ↑/↓ row nav,
 `f` capability filter (all → grade = 5 → grade ≥ 4 on the selected index), `o`
@@ -26,6 +26,7 @@ import os
 import sys
 
 from . import render
+from .session import Session as SelectionSession
 
 try:
     from rich.text import Text
@@ -49,67 +50,44 @@ TABLE_FOOTER = ("←/→ or 1–N role · ↑/↓ move · f filter · o objectiv
 _LENS = render.OBJECTIVES
 
 
-class Session:
-    """TUI state: role tab, cursor, filter, objective override, open detail
-    row.
-
-    `frame()` renders the current state; `key()` applies one key. The two
-    stay separate so the Textual shell is just draw → key → redraw.
-    """
+class Session(SelectionSession):
+    """Terminal navigation and frames over the UI-independent advice state."""
 
     def __init__(self, ds, roles, role_name=None):
-        self.ds = ds
-        self.roles = roles
-        self.role_i = (0 if role_name is None else
-                       next(i for i, r in enumerate(roles)
-                            if r["name"] == role_name))
+        super().__init__(ds, roles, role_name)
         self.cursor = 0
-        self.filt = 0
-        self.obj = None       # objective override; None = role default
-        self.detail_row = None    # row dict open in the detail view
         self.quit = False
-        self._rows = []           # display-ordered rows of the last table
-
-    @property
-    def role(self):
-        return self.roles[self.role_i]
-
-    @property
-    def objective(self):
-        return self.obj or self.role["objective"]
 
     def frame(self):
-        role = self.role
-        if self.detail_row is not None:
+        result = self.query()
+        if result["details"] is not None:
             return (["LLM RATINGS — detail", ""]
-                    + render.detail(self.ds, self.detail_row, role,
+                    + render.detail(self.ds, result["details"], self.role,
                                     self.objective)
                     + ["", "Esc back · q quit", render.ATTRIBUTION])
-        lines, self._rows = render.table(
-            self.ds, role, objective=self.objective,
-            min_grade=FILTERS[self.filt][1])
-        sel = [i for i, ln in enumerate(lines)
-               if any(ln.startswith(f"  {row['model']} ")
-                      for row in self._rows)]
-        if sel:
-            self.cursor = min(self.cursor, len(sel) - 1)
-            at = sel[self.cursor]
+        lines, rows = render.table(self.ds, self.role, result=result)
+        self.cursor = next((i for i, row in enumerate(rows)
+                            if row["key"] == self.selected_key), 0)
+        if rows:
+            at = next(i for i, line in enumerate(lines)
+                      if line.startswith(f"  {rows[self.cursor]['model']} "))
             lines[at] = "\x1b[7m" + lines[at] + "\x1b[0m"
-        state = "default" if self.obj is None else "override"
-        status = (f"LLM RATINGS — {role['name']} · objective "
+        state = "default" if self.objective_override is None else "override"
+        filter_label = next(label for label, grade in FILTERS
+                            if grade == self.min_grade)
+        status = (f"LLM RATINGS — {self.role['name']} · objective "
                   f"{render.OBJECTIVE_LABEL[self.objective]} ({state}) · "
-                  f"filter: {FILTERS[self.filt][0]}")
-        # render.table already carries the role header + column header lines.
+                  f"filter: {filter_label}")
         return [status, ""] + lines + ["", TABLE_FOOTER, render.ATTRIBUTION]
 
     def key(self, k):
         if self.quit:
             return
-        if self.detail_row is not None:
+        if self.detail_key is not None:
             if k in ("q", "eof"):
                 self.quit = True
             elif k == "esc":
-                self.detail_row = None
+                self.close_details()
             elif k in ("left", "right"):
                 self._switch_role(k)
             return
@@ -118,35 +96,36 @@ class Session:
         elif k in ("left", "right") or (
                 k.isdigit() and 1 <= int(k) <= len(self.roles)):
             self._switch_role(k)
-        elif k == "up":
-            self.cursor = max(0, self.cursor - 1)
-        elif k == "down":
-            self.cursor += 1
         elif k == "f":
-            self.filt = (self.filt + 1) % len(FILTERS)
-            self.cursor = 0
+            i = next(i for i, (_, grade) in enumerate(FILTERS)
+                     if grade == self.min_grade)
+            self.set_min_grade(FILTERS[(i + 1) % len(FILTERS)][1])
         elif k == "o":
-            # cap → ppi → price → role default (None); resets on role switch.
-            i = _LENS.index(self.obj) if self.obj in _LENS else -1
-            self.obj = _LENS[i + 1] if i + 1 < len(_LENS) else None
-            self.cursor = 0
-        elif k == "enter":
-            if self._rows:
-                self.detail_row = self._rows[self.cursor]
+            i = (_LENS.index(self.objective_override)
+                 if self.objective_override in _LENS else -1)
+            self.set_objective(_LENS[i + 1] if i + 1 < len(_LENS) else None)
+        elif k in ("up", "down", "enter"):
+            rows = self.query()["table_rows"]
+            if not rows:
+                return
+            self.cursor = next((i for i, row in enumerate(rows)
+                                if row["key"] == self.selected_key), 0)
+            if k == "enter":
+                self.request_details(rows[self.cursor]["key"])
+            else:
+                self.cursor = max(0, min(len(rows) - 1,
+                                        self.cursor + (1 if k == "down" else -1)))
+                self.select_model(rows[self.cursor]["key"])
 
     def _switch_role(self, k):
-        """←/→ wrap around; 1–N jump. Spec §6: the objective override resets
-        on role switch so a stale lens never carries over."""
-        n = len(self.roles)
+        i = self.roles.index(self.role)
         if k == "left":
-            self.role_i = (self.role_i - 1) % n
+            i = (i - 1) % len(self.roles)
         elif k == "right":
-            self.role_i = (self.role_i + 1) % n
+            i = (i + 1) % len(self.roles)
         else:
-            self.role_i = int(k) - 1
-        self.obj = None
-        self.cursor = 0
-        self.detail_row = None
+            i = int(k) - 1
+        self.set_role(self.roles[i]["name"])
 
 
 if _TEXTUAL:

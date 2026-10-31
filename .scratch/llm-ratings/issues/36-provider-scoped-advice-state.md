@@ -1,7 +1,7 @@
 # Add provider-scoped advice and shared selection state
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 35
 
 ## What to build
@@ -63,14 +63,14 @@ Use the smallest UI-independent state that owns the active role, optional object
 
 ## Acceptance criteria
 
-- [ ] Loading the real fixture through `fetch_all`, `identity.build` and `load_roles`, then querying one shared state yields complete Model table and Provider picks projections. The batch Model table uses that same path; tests do not exercise an unused parallel policy.
-- [ ] Hand-computable edge fixtures prove direct objective-order Primary/Runner-up selection, including a dominated pick that frontier-first order would incorrectly replace. Models with multiple efforts appear only once, at the objective-selected effort; filter failure does not trigger another-effort substitution. Zero/one/two-model cases return exactly zero/one/two picks per creator.
-- [ ] Selecting a creator changes Intelligence frontier/path/replacements/top-three cheaper-within-five alternatives to that creator. All providers restores global comparisons. A valid non-selected effort and points below the display filter or price floor remain in the advisory universe. Same-effort replacement remains preferred when cross-effort advice is also available.
-- [ ] Scores and all existing grades for the same configurations are unchanged when creator/capability constraints change. Artificial Analysis-only models do not enter candidates/advice; source-only models remain unranked with reasons; full catalog creators and the five fixed shortcuts remain reachable even with no qualifying picks.
-- [ ] Query results retain included models excluded by the active capability display filter, with their objective-selected configurations and an explicit display-filter exclusion reason, separately from models lacking qualifying measurements. Keep those filtered records available to secondary disclosures in the selected provider scope; do not relabel them as unranked measurement failures or select another effort to pass the filter.
-- [ ] All state transitions in the table above preserve unrelated choices and clear stale row/detail selection. Role switches reset only the objective override in addition to stale selection; view switches preserve it. Explicit requests, not passive selection, control requested details.
-- [ ] Empty intersections retain the selected state and expose named-only recovery. Unsupported Coding/Agentic objective overrides stay explicit and selected until objective recovery. Area views have no cost-frontier/replacement/cheaper-alternative claims or price-based tie.
-- [ ] Query results expose selected role/index/objective/provider/filter/view and advisory scope, plus unavailable/unranked reasons. No filter/state action performs a new source acquisition. Runtime documentation and batch behavior use full visible objective/source/index labels.
+- [x] Loading the real fixture through `fetch_all`, `identity.build` and `load_roles`, then querying one shared state yields complete Model table and Provider picks projections. The batch Model table uses that same path; tests do not exercise an unused parallel policy.
+- [x] Hand-computable edge fixtures prove direct objective-order Primary/Runner-up selection, including a dominated pick that frontier-first order would incorrectly replace. Models with multiple efforts appear only once, at the objective-selected effort; filter failure does not trigger another-effort substitution. Zero/one/two-model cases return exactly zero/one/two picks per creator.
+- [x] Selecting a creator changes Intelligence frontier/path/replacements/top-three cheaper-within-five alternatives to that creator. All providers restores global comparisons. A valid non-selected effort and points below the display filter or price floor remain in the advisory universe. Same-effort replacement remains preferred when cross-effort advice is also available.
+- [x] Scores and all existing grades for the same configurations are unchanged when creator/capability constraints change. Artificial Analysis-only models do not enter candidates/advice; source-only models remain unranked with reasons; full catalog creators and the five fixed shortcuts remain reachable even with no qualifying picks.
+- [x] Query results retain included models excluded by the active capability display filter, with their objective-selected configurations and an explicit display-filter exclusion reason, separately from models lacking qualifying measurements. Keep those filtered records available to secondary disclosures in the selected provider scope; do not relabel them as unranked measurement failures or select another effort to pass the filter.
+- [x] All state transitions in the table above preserve unrelated choices and clear stale row/detail selection. Role switches reset only the objective override in addition to stale selection; view switches preserve it. Explicit requests, not passive selection, control requested details.
+- [x] Empty intersections retain the selected state and expose named-only recovery. Unsupported Coding/Agentic objective overrides stay explicit and selected until objective recovery. Area views have no cost-frontier/replacement/cheaper-alternative claims or price-based tie.
+- [x] Query results expose selected role/index/objective/provider/filter/view and advisory scope, plus unavailable/unranked reasons. No filter/state action performs a new source acquisition. Runtime documentation and batch behavior use full visible objective/source/index labels.
 
 ## Verification
 
@@ -91,3 +91,98 @@ No browser implementation, new terminal provider controls, saved settings, extra
 - [Verify AA index cost bases and latency semantics — resolved Answer](32-aa-role-metric-bases.md#answer) and [immutable metric findings](https://github.com/azarakovskiy/llm-ratings/blob/0c26a6174644ef292b616bf704bf2c72a4043b79/.scratch/llm-ratings/assets/32-aa-role-metric-bases.md)
 - [Archived provider-workflow source](https://github.com/azarakovskiy/llm-ratings/blob/29beda7bb4872c8640d19c4b15e4d01405d134c3/.scratch/llm-ratings/assets/29-provider-quick-selection.prototype.html): workflow evidence only; its visual design and temporary role/index policy are not the product specification.
 - [Redesign the provider-selection prototype for readable model advice — live Provider lens approval](33-redesign-provider-selection-prototype.md#answer), with approved [Model table](https://github.com/azarakovskiy/llm-ratings/blob/dd44964/.scratch/llm-ratings/assets/33-provider-selection-web/C-desktop.png) and [Provider picks](https://github.com/azarakovskiy/llm-ratings/blob/dd44964/.scratch/llm-ratings/assets/33-provider-selection-web/C-provider-picks.png) evidence. The captured synthesized fixture is not real provider coverage or live market advice; no prototype fixture, variant switcher or Preview-state control is an implementation source.
+
+## Answer
+
+Resolved 2026-10-31 on `implement/t36`, based on integration prerequisite
+`3baa497`. Batch and the existing terminal adapter now consume one
+UI-independent session/query path. No browser, terminal provider controls,
+saved preferences, extra scoring policy or acquisition path was added.
+
+### Downstream contract
+
+- `llmratings.session.Session(ds, roles, role_name=None)` owns `role`,
+  `objective_override`, effective `objective`, `min_grade`, `provider`,
+  `view`, `selected_key` and `detail_key`. Defaults are the first loaded
+  role, its default objective, all grades, All providers, Model table and
+  no model/detail request.
+- `set_role(name)`, `set_objective(None | "cap" | "ppi" | "price")`,
+  `set_min_grade(None | 5 | 4)`, `set_provider(None | creator)` and
+  `set_view("table" | "picks")` return the new query result. Each clears
+  stale passive/detail selection and preserves unrelated choices; only
+  role changes also clear the objective override.
+- `select_model(key)` is passive. `request_details(key)` and
+  `close_details()` explicitly control evidence. Requests resolve against
+  current creator-scoped ranked, excluded or unranked records rather than
+  retaining an old row/configuration dictionary.
+- `recover(action)` supports `all_providers`, `clear_capability`,
+  `highest_capability` and `role_default`. Each changes only its named
+  choice. Unsupported area objectives remain selected and explicitly
+  unavailable until an objective action changes them.
+- `render.query(ds, role, objective=None, min_grade=None, provider=None,
+  view="table")` remains the single selection policy. `rows` retains direct
+  objective order and actual selected `Rating` configurations. `sections`
+  and `table_rows` provide Intelligence frontier-first presentation, with
+  section-relative deltas; area tables retain direct score order.
+- `picks` contains creator groups with `provider`, `primary`, `runner_up`,
+  `reason`, `unranked` and `excluded`. Picks take the first two distinct
+  models from direct objective order, not table sections. One model gives
+  `No qualifying runner-up`; zero-pick creators and reasons remain in
+  `providers_without_picks`. `creators` is the full known catalog creator
+  list; `shortcuts` is the fixed OpenAI/Anthropic/Google/DeepSeek/xAI tuple.
+- Results identify `role`, `index`, `objective`, `objective_override`,
+  `provider`, `provider_label`, `min_grade`, `view`, `status`, `reason`,
+  `advisory_scope` and `recovery_actions`. Scope has `kind`
+  (`global`, `provider` or `unavailable`), selected `provider` and a full
+  visible `label`.
+- Intelligence `points`, `frontier_path`, row `frontier`, `dom` and
+  `alternatives` use all valid included-model efforts in that creator
+  scope, independent of floor/display filtering. Detail rendering consumes
+  those same row alternatives instead of rebuilding global advice.
+  Coding/Agentic have no cost frontier, replacement or alternatives.
+- Grade reference populations precede provider/display constraints.
+  Display-only exclusions retain their selected configuration/reason,
+  separate from unranked measurement failures. Artificial Analysis-only
+  creators remain discoverable but their models never enter candidates or
+  advice. Unattributed source-only evidence remains reachable under
+  All providers, without inventing creator membership.
+- `table(..., result=query_result)` and `render(..., result=query_result)`
+  consume an existing session result without another query. The CLI
+  creates the actual shared `Session`; the terminal adapter adds only
+  cursor/key/frame behavior. Runtime documentation is updated in the
+  fixture README.
+
+### Exercised verification
+
+- `PYTHONPATH=tests python3 -m unittest test_cli.SelectionPolicy
+  test_cli.SavedPolicy test_tui`: **59 tests passed**. An earlier unittest
+  `-k` expression selected no tests (exit 5); the corrected command above
+  ran the intended cases. No product-code failure was observed.
+- Separate throwaway Python consumer: **exit 0** after loading the main
+  fixture through `fetch_all`, `identity.build`, `load_roles` and the actual
+  shared `Session`. It printed/asserted Explorer's five selected Low-effort
+  rows; OpenAI Primary Luna Low / Runner-up Sol Low; single Anthropic/Kimi
+  picks; invariant scoped grades; every choice/recovery category; and stale
+  detail clearing. Opus Low's global replacement was Sol Medium (+3 points,
+  about $0.0361 saved); selecting Anthropic removed that cross-creator
+  replacement and all three global cheaper alternatives.
+- Labelled synthetic source-payload variations in that separate consumer
+  proved a dominated `second Maximum` Runner-up despite frontier-first
+  table order, zero/one/two-model picks, catalog-only inclusion reasons,
+  selected-effort display exclusions versus missing-cost unranked records,
+  same-effort non-selected `peer Maximum` replacement preference, and
+  three creator-local cheaper alternatives. A below-floor/filter point
+  remained on the scoped frontier path. All providers restored global
+  comparisons. The throwaway script was removed after use.
+- Non-TTY `LLM_RATINGS_AA_API_KEY=dummy python3 -m llmratings --fixtures
+  .scratch/llm-ratings/fixtures/main --role Explorer`: **exit 0**, with full
+  role/objective/index/creator-scope labels, Artificial Analysis attribution,
+  real selected configurations and source-only reasons.
+- `make test`: **96 tests passed**. `make lint`: **exit 0**. Both repository
+  checks ran once after implementation, after all delegated edits landed.
+- `git merge --no-edit integration/role-advice-web`: **Already up to date**.
+
+All source evidence here is saved historical/synthetic fixture data or
+labelled temporary payloads, not current market recommendations, new live
+coverage, area-index task costs or verified token share. Browser rendering
+and visible provider controls remain assigned to ticket 37.
