@@ -124,6 +124,8 @@ class WebAdvice(unittest.TestCase):
                      "GPT-5.6 Sol", "33.3", "Low", "Artificial Analysis",
                      "DeepSWE", "Terminal-Bench", "2026-08-05"):
             self.assertIn(text, doc.visible)
+        self.assertIn("fictional model names", doc.visible)
+        self.assertIn("Synthetic fixture evidence", doc.visible)
         self.assertIn("snapshot", doc.visible.lower())
         self.assertTrue(any(tag == "a" and attrs.get("href", "").startswith(
             "https://artificialanalysis.ai") for tag, attrs in doc.tags))
@@ -204,6 +206,127 @@ class WebAdvice(unittest.TestCase):
         status, _, _ = self.request("POST", body="action=details&value=unknown-model",
                                     headers={"Content-Type": "application/x-www-form-urlencoded"})
         self.assertEqual(status, 400)
+
+    def test_stale_table_details_cannot_open_an_invisible_pick_region(self):
+        self.action("view", "picks")
+        status, _, _ = self.request(
+            "POST", body=urlencode({"action": "details", "value": "gpt-5-5"}),
+            headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 400)
+        status, _, body = self.request()
+        self.assertEqual(status, 200)
+        current = Document(body)
+        self.assertFalse(self.open_evidence(current))
+        self.assertNotIn("Details opened", current.visible)
+        opened = self.action("details", "gpt-5-6-luna")
+        self.assertEqual([region["id"] for region in self.open_evidence(opened)],
+                         ["evidence-gpt-5-6-luna"])
+        self.action("capability", "5")
+        excluded = self.action("details", "gpt-5-6-luna")
+        self.assertEqual(len(self.open_evidence(excluded)), 1)
+        self.assertTrue(any(attrs.get("id") == "excluded-models" and "open" in attrs
+                            for _, attrs in excluded.tags))
+
+    def test_missing_creator_stays_explained_and_reachable_without_fabricated_picks(self):
+        for with_known_creator in (False, True):
+            with self.subTest(with_known_creator=with_known_creator):
+                rows = [aa_config("unattributed", provider=None)]
+                if with_known_creator:
+                    rows.append(aa_config("ordinary", provider="Acme"))
+                with tempfile.TemporaryDirectory() as td:
+                    docs = {
+                        "aa.json": {"data": rows},
+                        "deepswe.json": {"rows": [
+                            {"model": row["slug"].removesuffix("-low"),
+                             "reasoning_effort": "low", "pass_at_1": .5}
+                            for row in rows]},
+                        "tb.json": {"listing": [], "submissions": {}},
+                    }
+                    for name, payload in docs.items():
+                        Path(td, name).write_text(json.dumps(payload))
+                    ds = identity.build({"unattributed": "unattributed", "ordinary": "ordinary"},
+                                        fetch.fetch_all(td))
+                self.start_dataset(ds)
+                picks = self.action("view", "picks")
+                self.assertIn("Creator unavailable", picks.visible)
+                self.assertIn("unattributed", picks.visible)
+                self.assertTrue(any(attrs.get("id") == "details-unattributed"
+                                    for _, attrs in picks.tags))
+                self.assertFalse(any(tag == "option" and attrs.get("value") == "—"
+                                     for tag, attrs in picks.tags))
+                if not with_known_creator:
+                    self.assertIn("No creator-attributed picks", picks.visible)
+                opened = self.action("details", "unattributed")
+                self.assertEqual([region["id"] for region in self.open_evidence(opened)],
+                                 ["evidence-unattributed"])
+                self.assertTrue(any(attrs.get("id") == "creator-unavailable"
+                                    and "open" in attrs for _, attrs in opened.tags))
+                self.assertIn("Why this configuration", opened.visible)
+
+    def test_fixture_caveats_follow_the_supplied_provenance(self):
+        for fictional, synthetic in ((None, None), (False, False), (False, True), (True, True)):
+            with self.subTest(fictional=fictional, synthetic=synthetic):
+                with tempfile.TemporaryDirectory() as td:
+                    for name in (*fetch.FILES.values(), "or.json"):
+                        Path(td, name).write_bytes((FIXTURES / name).read_bytes())
+                    if fictional is not None:
+                        metadata = {"fictional_model_names": fictional, "sources": {
+                            source: {"synthetic": synthetic if source == "tb" else False}
+                            for source in ("aa", "deepswe", "tb", "or")}}
+                        Path(td, "provenance.json").write_text(json.dumps(metadata))
+                    ds = identity.build(
+                        identity.load_aliases(REPO / "llmratings" / "aliases.json"),
+                        fetch.fetch_all(td))
+                self.start_dataset(ds)
+                status, _, body = self.request()
+                self.assertEqual(status, 200)
+                doc = Document(body)
+                self.assertIn("Offline snapshot", doc.visible)
+                self.assertEqual("fictional model names" in doc.visible, fictional is True)
+                self.assertEqual("Synthetic fixture evidence" in doc.visible, synthetic is True)
+
+    def test_standard_error_is_not_presented_as_a_published_confidence_interval(self):
+        self.action("role", "Planner")
+        opened = self.action("details", "gpt-5-6-luna")
+        source_table = next(" ".join(table) for table in opened.tables
+                            if "Independent source evidence" in table)
+        self.assertIn("Published standard error: 0.021", source_table)
+        self.assertIn("Published confidence interval", source_table)
+        self.assertNotIn("0.736 to 0.778", source_table)
+
+    def test_paginated_dates_follow_the_opened_measurement_page(self):
+        with tempfile.TemporaryDirectory() as td:
+            aa = json.loads((FIXTURES / "aa.json").read_text())
+            low = next(row for row in aa["data"] if row["slug"] == "gpt-5-6-luna-low")
+            maximum = next(row for row in aa["data"] if row["name"] == "GPT-5.6 Luna (max)")
+            aa["data"] = [low] * 200 + [maximum]
+            Path(td, "aa.json").write_text(json.dumps(aa))
+            for name in ("deepswe.json", "tb.json", "or.json"):
+                Path(td, name).write_bytes((FIXTURES / name).read_bytes())
+            origin = _LiveServer(td, page_dates={1: {"updated_at": "2026-09-01"},
+                                                2: {"updated_at": "2026-09-02"}})
+            self.addCleanup(origin.stop)
+            previous = os.environ.copy()
+            try:
+                os.environ.update(LLM_RATINGS_HTTP_BASE=origin.url(),
+                                  LLM_RATINGS_AA_API_KEY="page-date-test-secret")
+                ds = identity.build(
+                    identity.load_aliases(REPO / "llmratings" / "aliases.json"),
+                    fetch.fetch_all(None))
+            finally:
+                os.environ.clear()
+                os.environ.update(previous)
+        self.start_dataset(ds)
+        opened = self.action("details", "gpt-5-6-luna")
+        source_table = next(" ".join(table) for table in opened.tables
+                            if "Independent source evidence" in table)
+        self.assertIn("2026-09-01", source_table)
+        self.assertNotIn("2026-09-02", source_table)
+        urls = {attrs["href"] for tag, attrs in opened.tags if tag == "a"}
+        for page in (1, 2):
+            self.assertIn(origin.url(
+                f"/api/v2/language/models/free?page_size=200&page={page}"), urls)
+        self.assertNotIn("page-date-test-secret", opened.visible)
 
     def test_unranked_negative_cost_is_not_relabelled_positive_and_missing_metrics_stay_missing(self):
         with tempfile.TemporaryDirectory() as td:

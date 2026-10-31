@@ -279,3 +279,88 @@ Captured evidence:
 - No new browser-test framework, runtime dependency, acquisition endpoint,
   preview state, harness/config export or second policy was introduced.
 
+### Final review resolution — 2026-10-31
+
+All six P2 findings and the P3 population-policy duplication concern are
+resolved on `implement/review-fixes`, based on integration `0aa740a`.
+
+- Unknown-effort DeepSWE/Terminal-Bench scores and raw rows remain available,
+  but capability grades, ranks and source disagreement do not use an invented
+  unknown-effort population. The former regression that expected such grades
+  now checks the actual unavailable behavior. Tiny shared Artificial Analysis
+  score and independent-source population selectors serve both grades and
+  rank denominators.
+- Eligible models with no published creator stay explained and reachable
+  through **Creator unavailable**. No creator is invented. A set containing
+  only those models explicitly reports **No creator-attributed picks**.
+- Details resolves against the active view's actual rendered target set,
+  including legitimate excluded/unranked/creator-unavailable disclosures.
+  Stale queued table requests cannot announce an invisible Provider picks
+  region.
+- Artificial Analysis evidence pairs each measurement's page URL and
+  published dates, and exposes the retained per-page provenance. The final
+  page's dates are not displayed against the first page.
+- Every fixture run keeps a general offline notice. Fictional-name and
+  synthetic-source claims use retained explicit provenance; the historical
+  main fixture keeps its known caveats, while absent/nonsynthetic metadata
+  does not create a fictional-data claim.
+- Terminal-Bench's published accuracy standard error is labelled as such,
+  not as a published interval. DeepSWE's genuinely published confidence
+  interval remains separately labelled, and all raw source evidence remains.
+
+#### Reproduction and exercised proof
+
+- Before edits, a real fixture/payload consumer produced unknown-effort
+  DeepSWE **0.7 / grade 3 / rank 2** and Terminal-Bench **0.8 / grade 5 /
+  rank 1**, with a false disagreement. After the fixes, the same raw scores
+  have unavailable grades/ranks and no unknown-effort disagreement. The
+  actual rendered other-effort table also showed both raw scores with **—**
+  for grade and rank.
+- Before edits, an eligible creator-missing Luna yielded `status="ok"`,
+  empty picks and no Details target. The final served source-shaped fixture
+  at **http://127.0.0.1:51522/** showed the explicit no-attributed-picks
+  state, **Creator unavailable (1)** and keyboard-opened Luna evidence.
+  Its supplied nonsynthetic, non-fictional metadata produced only the
+  general offline notice. The main fixture at
+  **http://127.0.0.1:51458/** still named its fictional models and synthetic
+  Terminal-Bench/OpenRouter sources.
+- Before edits, synchronous browser clicks queued Provider picks followed
+  by GPT-5.5 Details and announced opened evidence with zero visible regions.
+  The final browser sequence left **No model details open** and a visible
+  rejected-action message, not a false opened announcement. The HTTP
+  regression observes **400** for that stale target; a subsequent valid
+  keyboard Details action opens the model normally. Provider picks still
+  opens display-excluded Luna and source-only Terra evidence.
+- Actual local-origin pagination supplied page 1 **2026-09-01 / version
+  4.1** and page 2 **2026-09-02 / version v5-smoke**. The browser at
+  **http://127.0.0.1:51540/** showed Luna Low's page-1 link/date and both
+  page-specific provenance entries. Switching to Planner opened Maximum
+  with its page-2 link/date, not page 1's date. These are labelled
+  source-shaped test responses, not new market observations.
+- The main browser showed Luna Maximum Terminal-Bench **0.757** with
+  **Published standard error: 0.021**, separately from DeepSWE's
+  **Published confidence interval 0.632 to 0.712**. The normalized consumer
+  retained the raw stderr and no calculated confidence-interval endpoints.
+- At **1440 × 1100** and **390 × 844**, both views and revised evidence
+  remained usable. All tested narrow pages had document width **390**.
+  Main evidence retained **15px** table text and labelled, keyboard-focusable
+  internal scroll regions; measured configurations, timing and independent
+  source tables had **295px** viewports with **950/1680/1180px** content.
+  Keyboard close returned focus to the opener. Creator-unavailable,
+  per-page provenance and unknown-effort evidence also stayed within the
+  390-pixel document. Browser error collections were empty for all four
+  tabs; the main browser console collection was empty.
+- `git merge --no-edit integration/role-advice-web` returned
+  **Already up to date** before final checks. `make test` ran once:
+  **109 tests passed in 23.497s**. `make lint` ran once and exited **0**.
+  No new test framework or dependency was added.
+- All verification tabs were closed. The direct fixture web process exited
+  **0** on Ctrl-C. All temporary edge/origin listeners were closed and joined,
+  and their temporary payload directories were removed.
+
+Runtime/source documentation and the relevant
+[data](34-preserve-index-metrics-provenance.md#final-review-resolution--2026-10-31)
+and [state](36-provider-scoped-advice-state.md#final-review-resolution--2026-10-31)
+Answers record the changed contracts. No prototype branch was merged, no
+current-market evidence or OpenRouter share was claimed, and no integration
+branch was changed by these fixes.

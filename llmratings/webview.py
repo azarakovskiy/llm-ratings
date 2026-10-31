@@ -55,6 +55,10 @@ def chooser(name, label, options, selected):
             '</form>')
 
 
+def date_labels(dates):
+    return text("; ".join(f"{label}: {value}" for label, value in dates.items())) or "Unavailable"
+
+
 def provenance(ds, ident="source-provenance"):
     info = ds.provenance
     sources = info.get("sources", {})
@@ -67,20 +71,25 @@ def provenance(ds, ident="source-provenance"):
                if fetched else "Unavailable")
     content = (f'<div class="provenance"><p>Ratings and matching Intelligence task costs: '
                f'{attribution}. Refresh fetched: {fetched}.</p>')
+    names = {"aa": "Artificial Analysis", "deepswe": "DeepSWE",
+             "tb": "Terminal-Bench", "or": "OpenRouter"}
     if info.get("mode") == "fixture":
         snapshots = sorted({s["snapshot_date"] for s in sources.values()
                             if s.get("snapshot_date")})
         history = ", ".join(snapshots) if snapshots else "Unavailable"
+        caveats = (" Curated data includes fictional model names."
+                   if info.get("fictional_model_names") is True else "")
+        synthetic_sources = [label for key, label in names.items()
+                             if sources.get(key, {}).get("synthetic") is True]
+        if synthetic_sources:
+            caveats += f" Synthetic fixture sources: {', '.join(synthetic_sources)}."
         content += (f'<p class="fixture-notice"><strong>Offline snapshot — not live market '
-                    f'advice.</strong> Recorded source snapshot: {text(history)}. '
-                    'Curated data includes fictional model names; Terminal-Bench and '
-                    'OpenRouter data may be synthetic. Missing creators are not coverage '
-                    'claims. Reading this snapshot does not update its measurements.</p>')
+                    f'advice.</strong> Recorded source snapshot: {text(history)}.'
+                    f'{text(caveats)} Missing creators are not coverage claims. '
+                    'Reading this snapshot does not update its measurements.</p>')
     else:
         content += '<p>Fetch time is not the publication date of each measurement.</p>'
     source_items = []
-    names = {"aa": "Artificial Analysis", "deepswe": "DeepSWE",
-             "tb": "Terminal-Bench", "or": "OpenRouter"}
     for key, label in names.items():
         source = sources.get(key, {})
         source_urls = source.get("urls", [])
@@ -89,9 +98,17 @@ def provenance(ds, ident="source-provenance"):
         synthetic = source.get("synthetic")
         synthetic_note = (" Synthetic fixture evidence." if synthetic is True else
                           " Synthetic status unavailable." if synthetic is None else "")
-        dates = "; ".join(f"{k}: {v}" for k, v in
-                          source.get("source_dates", {}).items())
-        date_note = f" Published evidence: {text(dates)}." if dates else ""
+        if source.get("pages"):
+            pages = "".join(
+                f'<li>{link(page["url"], f"Page {i}")}: published source dates: '
+                f'{date_labels(page.get("source_dates", {}))}. '
+                'Reported Intelligence Index version: '
+                f'{text(page.get("intelligence_index_version") or "Unavailable")}.</li>'
+                for i, page in enumerate(source["pages"], 1))
+            date_note = f'<ul>{pages}</ul>'
+        else:
+            date_note = (f' Published source dates: '
+                         f'{date_labels(source.get("source_dates", {}))}.')
         source_items.append(f'<li>{source_link}: source snapshot {text(snapshot)}.'
                             f'{synthetic_note}{date_note}</li>')
     return (content + f'<details class="source-dates" id="{text(ident)}">'
@@ -191,10 +208,16 @@ def source_evidence(model, configurations):
                     if source["rank"] is not None else number(None))
             raw = number(source["score"])
             if rating and rating.ci_lo is not None and rating.ci_hi is not None:
-                raw += (f'<span class="secondary block">Published interval '
+                raw += (f'<span class="secondary block">Published confidence interval '
                         f'{number(rating.ci_lo)} to {number(rating.ci_hi)}</span>')
+            if rating and rating.accuracy_stderr is not None:
+                raw += ('<span class="secondary block">Published standard error: '
+                        f'{number(rating.accuracy_stderr)}</span>')
             url = source["source_url"]
             attribution = link(url, f'{source["name"]} evidence for {model}, {effort}')
+            if rating and rating.source_dates:
+                attribution += ('<span class="secondary block">Published source dates: '
+                                f'{date_labels(rating.source_dates)}</span>')
             if rating and rating.date:
                 attribution += f'<span class="secondary block">Observation date: {text(rating.date)}</span>'
             if rating and rating.agent:
@@ -594,6 +617,20 @@ def unranked_models(session, result):
             f'the active objective. They are not recommendations.</p><ul>{items}</ul></details>')
 
 
+def creator_unavailable_models(session, result):
+    rows = result["creator_unavailable"]
+    if result["view"] != "picks" or not rows:
+        return ""
+    items = "".join(f'<li><strong>{text(row["model"])}</strong>: {text(row["reason"])}.'
+                    + details_button(result, row) + inline_evidence(session, result, row)
+                    + '</li>' for row in rows)
+    opened = bool(result.get("details") and any(r["key"] == result["details"]["key"] for r in rows))
+    return (f'<details class="secondary-disclosure" id="creator-unavailable"'
+            f'{" open" if opened else ""}><summary>Creator unavailable ({len(rows)})</summary>'
+            '<p>These models meet the active measurement and capability requirements. '
+            'No creator is inferred or added to the creator chooser.</p><ul>' + items + '</ul></details>')
+
+
 def empty_creators(result):
     groups = result["providers_without_picks"]
     if not groups or result["view"] != "picks" or result["status"] == "unavailable_objective":
@@ -771,8 +808,9 @@ def page(session, result):
                 else 'No model details open'))
     comparison = ""
     if result["status"] != "ok":
-        heading = ("Unavailable objective" if result["status"] == "unavailable_objective"
-                   else "No qualifying configuration")
+        heading = {"unavailable_objective": "Unavailable objective",
+                   "creator_unavailable": "No creator-attributed picks"}.get(
+                       result["status"], "No qualifying configuration")
         comparison += (f'<section class="state-message" aria-labelledby="state-title">'
                        f'<h3 id="state-title">{heading}</h3><p>{text(result["reason"])}</p>'
                        + recoveries(result) + '</section>')
@@ -789,6 +827,7 @@ def page(session, result):
                    'it is not reconstructed and never changes selection or order.</p>'
                    + frontier_path(session, result) + source_ratings(result)
                    + excluded_models(session, result) + unranked_models(session, result)
+                   + creator_unavailable_models(session, result)
                    + empty_creators(result) + how_picks_work(session))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'

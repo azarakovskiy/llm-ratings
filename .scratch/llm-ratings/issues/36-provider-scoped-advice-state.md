@@ -186,3 +186,26 @@ All source evidence here is saved historical/synthetic fixture data or
 labelled temporary payloads, not current market recommendations, new live
 coverage, area-index task costs or verified token share. Browser rendering
 and visible provider controls remain assigned to ticket 37.
+
+### Final review resolution — 2026-10-31
+
+- Eligible configurations whose Artificial Analysis creator is unavailable
+  remain in the shared query's `creator_unavailable` records. Provider picks
+  exposes their reasons and Details under **Creator unavailable** without
+  inventing a creator. If these are the only eligible models, the explicit
+  state is **No creator-attributed picks**, not an unexplained empty shelf.
+- The query exposes active-view `detail_targets`: Model table rows or actual
+  Primary/Runner-up rows, plus rendered creator-unavailable, excluded and
+  unranked disclosures. Session requests and subsequent queries use this same
+  target set. A table model outside the current two picks cannot be accepted
+  by a stale queued Details request.
+- Real session/HTTP regressions preserve legitimate excluded and unranked
+  Details requests while rejecting a stale GPT-5.5 request after switching
+  default Explorer advice to Provider picks. Missing-creator payloads cover
+  both mixed ordinary picks and the no-attributed-picks state.
+- In the actual browser, queued view/GPT-5.5 submissions left **No model
+  details open** and no visible evidence region. A subsequent keyboard
+  Details action opened Luna normally. At **390 pixels**, excluded Luna
+  and source-only Terra evidence remained reachable in Provider picks.
+  The full **109-test** suite and lint passed once; [ticket 38](38-inline-evidence-web-cutover.md#final-review-resolution--2026-10-31)
+  records the complete review-fix evidence.

@@ -137,6 +137,24 @@ class SharedSession(unittest.TestCase):
         self.assertEqual(result["details"]["effort"], "low")
         self.assertIs(result["selected"]["configuration"], result["details"]["configuration"])
 
+    def test_details_require_a_target_rendered_in_the_active_view(self):
+        session = Session(DS, ROLES)
+        session.request_details("gpt-5-5")
+        result = session.set_view("picks")
+        self.assertIsNone(result["details"])
+        with self.assertRaises(ValueError):
+            session.request_details("gpt-5-5")
+        self.assertIsNone(session.query()["details"])
+        opened = session.request_details("gpt-5-6-luna")
+        self.assertEqual(opened["details"]["key"], "gpt-5-6-luna")
+        session.set_min_grade(5)
+        excluded = session.request_details("gpt-5-6-luna")
+        self.assertIn(excluded["details"], excluded["excluded"])
+        unranked = session.request_details("dsw:gpt-5-6-terra")
+        self.assertIn(unranked["details"], unranked["unranked"])
+        session.set_view("table")
+        self.assertEqual(session.request_details("gpt-5-5")["details"]["key"], "gpt-5-5")
+
     def test_secondary_requests_keep_scoped_excluded_and_unranked_evidence(self):
         session = Session(DS, ROLES)
         session.set_provider("OpenAI")

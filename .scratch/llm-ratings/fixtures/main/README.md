@@ -204,13 +204,19 @@ Coding/Agentic formulas remain a source gap.
 
 `Dataset.provenance` exposes `mode` (`fixture` or `live`), actual UTC
 `fetched_at`, and per-source `urls`, `snapshot_date`, `synthetic`, and labelled
-`source_dates` when published. Unknown history stays null/empty. Live
-Artificial Analysis pagination also retains page URLs, row ranges, reported
-index versions and dates; each rating gets its page's
-`intelligence_index_version` and `source_url`. Terminal-Bench ratings retain
+`source_dates` when published. Optional fixture metadata also retains the
+boolean `fictional_model_names`; this main fixture sets it to true. Other
+saved responses are not called fictional or synthetic without their own flags.
+Unknown history stays null/empty. Live Artificial Analysis pagination retains
+page URLs, row ranges, reported index versions and dates. Each rating gets its
+page's `intelligence_index_version`, `source_url` and `source_dates`; the final
+page's dates are not attached to the first page. Terminal-Bench ratings retain
 individual listing `download_url` values in `source_url`, plus submission
-`date`, agent and wholesale raw evidence. Source URLs omit credentials,
-headers, fragments and non-pagination query parameters.
+`date`, agent, published `accuracy_stderr` and wholesale raw evidence. Its
+standard error is not a published confidence interval and is not normalized
+into `ci_lo`/`ci_hi`; those fields retain DeepSWE's published endpoints.
+Source URLs omit credentials, headers, fragments and non-pagination query
+parameters.
 
 The canonical model key is still the Artificial Analysis base slug; UUIDs
 remain per-effort evidence. Existing aliases and Terminal-Bench best-agent,
@@ -345,9 +351,12 @@ For descending distinct value position `i` (zero-based) among `n` values,
 the higher-is-better grade is `6 - (floor(i * 5 / n) + 1)`. Small sets can
 populate fewer than five grades; empty axes stay unavailable. Recompute on
 refresh. DeepSWE and Terminal-Bench grades remain **source-independent within
-each source's rated effort population**. Terminal-Bench first collapses best
-agent per model × effort, breaking score ties by recency. Never average these
-ratings or different Artificial Analysis indexes into one score.
+each source's rated effort population**. Unknown-effort raw scores stay
+available, but do not receive capability grades or ranks and cannot create
+source disagreement. Shared population selectors keep grades and rank
+denominators aligned. Terminal-Bench first collapses best agent per model ×
+effort, breaking score ties by recency. Never average these ratings or different
+Artificial Analysis indexes into one score.
 
 The floor applies **only** to Lowest qualifying price, including a manual
 override on any Intelligence role. For bundled profiles grade **2 qualifies**
@@ -411,6 +420,10 @@ shortcuts are **OpenAI, Anthropic, Google, DeepSeek and xAI**, independent of
 scores, token share, role and eligible counts. A shortcut with no eligible model
 remains selectable. Unknown source-only creator evidence stays unranked and
 reachable under All providers rather than being assigned to an invented creator.
+An otherwise eligible Artificial Analysis configuration without a creator is
+retained separately as `creator_unavailable`. Provider picks exposes this
+evidence under **Creator unavailable** and explains when no creator-attributed
+picks exist; it does not add `—` as a creator or silently omit the model.
 
 Use explicit `set_role`, `set_objective`, `set_min_grade`, `set_provider` and
 `set_view` transitions. A role change clears the override and uses the new
@@ -418,6 +431,10 @@ profile's index/default; every other choice is retained. Other transitions
 change only their named choice. All result-set changes clear passive selection
 and requested details. `select_model` never opens evidence;
 `request_details(model_key)` and `close_details()` open and close it explicitly.
+Requests resolve only against the active view's `detail_targets`: Model table
+rows or actual Primary/Runner-up rows, plus creator-unavailable, excluded and
+unranked disclosures where rendered. A stale queued table request cannot
+announce opened evidence for a model absent from Provider picks.
 
 Empty or unavailable results retain all selected choices. Query
 `recovery_actions` exposes named-only actions: **All providers** clears only the

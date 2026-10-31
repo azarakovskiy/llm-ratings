@@ -15,8 +15,10 @@ LLM_RATINGS_HTTP_BASE override (test seam only — it swaps the origin of every
 live URL).
 
 Fixture metadata comes from optional provenance.json, not file modification
-times. A fixture read today is not a new measurement. Source URLs exclude
-credentials, headers and non-pagination query parameters.
+times. Fictional model names and synthetic sources are separate explicit flags;
+an offline file alone establishes neither. A fixture read today is not a new
+measurement. Source URLs exclude credentials, headers and non-pagination query
+parameters. Paginated source dates belong to their individual page URLs.
 """
 
 import json
@@ -201,8 +203,9 @@ def fetch_all(fixtures_dir):
     """Acquire raw sources and `_provenance` through the sole live/fixture seam.
 
     Missing/unreadable rating sources fail by name; OpenRouter is best effort.
-    A fixture's optional provenance.json supplies historical snapshot dates and
-    synthetic flags. Unknown dates stay unknown, never inferred from run time.
+    A fixture's optional provenance.json supplies historical snapshot dates,
+    fictional_model_names and per-source synthetic flags. Unknown dates stay
+    unknown, never inferred from run time.
     """
     mode = "fixture" if fixtures_dir is not None else "live"
     origins = _ORIGINS if fixtures_dir is not None else {
@@ -236,7 +239,11 @@ def fetch_all(fixtures_dir):
                 continue
             if filename == "or.json":
                 out["or"] = doc
-            elif isinstance(doc, dict) and isinstance(doc.get("sources"), dict):
+            elif isinstance(doc, dict):
+                if isinstance(doc.get("fictional_model_names"), bool):
+                    provenance["fictional_model_names"] = doc["fictional_model_names"]
+                if not isinstance(doc.get("sources"), dict):
+                    continue
                 for source, evidence in doc["sources"].items():
                     if source not in sources or not isinstance(evidence, dict):
                         continue
@@ -245,7 +252,8 @@ def fetch_all(fixtures_dir):
                     if isinstance(evidence.get("synthetic"), bool):
                         sources[source]["synthetic"] = evidence["synthetic"]
     for source in sources:
-        sources[source]["source_dates"] = _source_dates(out.get(source))
+        if not sources[source].get("pages"):
+            sources[source]["source_dates"] = _source_dates(out.get(source))
     tb = out.get("tb")
     listing = tb.get("listing") if isinstance(tb, dict) else None
     for entry in listing if isinstance(listing, list) else []:

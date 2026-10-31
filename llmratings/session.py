@@ -43,7 +43,7 @@ class Session:
                               min_grade=self.min_grade,
                               provider=self.provider, view=self.view)
         result["selected"] = self._record(result, self.selected_key)
-        result["details"] = self._record(result, self.detail_key)
+        result["details"] = result["detail_targets"].get(self.detail_key)
         return result
 
     def _changed(self):
@@ -99,9 +99,9 @@ class Session:
 
     def request_details(self, key):
         result = self.query()
-        details = self._record(result, key)
-        if not isinstance(key, str) or details is None:
-            raise ValueError(f"model is not in the current result: {key!r}")
+        if not isinstance(key, str) or key not in result["detail_targets"]:
+            raise ValueError(f"model has no details target in the current view: {key!r}")
+        details = result["detail_targets"][key]
         self.detail_key = key
         result["details"] = details
         return result
