@@ -1,7 +1,7 @@
 # 18 Role tabs: configurable roles with per-role objectives
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 ## What to build
@@ -90,3 +90,7 @@ OpenRouter-sourced context field. Grilling session verdict, user-confirmed
   legible — keep it.
 - Alternatives replace none of the dominated-arrow machinery; they are a
   detail-view block only.
+
+## Comments
+
+2026-10-28 tracker recovery: `Status` is aligned with the map's historical shipped record (`c21e146`). This is a metadata repair, not a new implementation or verification run. The role catalog has since been reopened in [Choose human-readable cross-harness role stereotypes](28-name-human-readable-roles.md).

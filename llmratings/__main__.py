@@ -1,19 +1,17 @@
-"""CLI entry point. Ticket 12's --category (five fixed-effort use-case
-categories) is replaced by ticket 18's --role: one of the roles from the
-checked-in roles.json (tab order = file order), each role's objective
-selecting every model's best reasoning effort. Ticket 15: the default run
-fetches all three rating sources live, plus best-effort OpenRouter
-enrichment (ticket 18); --fixtures opts into the offline test seam.
-Ticket 17: the interactive TUI is a thin Textual shell (docs/adr/0001)
-gated on a real TTY — no --interactive flag, and a missing textual
-dependency errors out before the fetch."""
+"""Local web launch or noninteractive batch advice from one shared policy.
+
+Each launch loads the three rating sources and best-effort OpenRouter catalog
+once. --fixtures reads offline payloads instead. --web serves one session on
+loopback until Ctrl-C; without it, output is batch even in a terminal.
+"""
 
 import argparse
 import os
 import sys
 from pathlib import Path
 
-from . import fetch, identity, render, tui
+from . import fetch, identity, render
+from .session import Session
 
 
 def main(argv=None):
@@ -30,32 +28,32 @@ def main(argv=None):
 
     ap = argparse.ArgumentParser(
         prog="llm-ratings",
-        description="Model-advice tables from DeepSWE, Terminal-Bench v2.1 and "
-                    "Artificial Analysis (PoC).")
+        description="Compare models using Artificial Analysis, DeepSWE and "
+                    "Terminal-Bench v2.1. Without --web, print batch advice "
+                    "and exit, including in a terminal.",
+        epilog="Python standard library only; no dependency installation. "
+               "Set LLM_RATINGS_AA_API_KEY (dummy for fixtures). "
+               "make run loads .env and adds --web. Offline example: "
+               "LLM_RATINGS_AA_API_KEY=dummy python3 -m llmratings --web "
+               "--fixtures .scratch/llm-ratings/fixtures/main --role Explorer. "
+               "Fixtures contain historical/synthetic data, not live advice. "
+               "Open the printed http://127.0.0.1:PORT/ URL; stop with Ctrl-C. "
+               "See README.md for controls, source dates and failure behavior.")
     ap.add_argument("--role", choices=[r["name"] for r in roles],
                     default=roles[0]["name"],
-                    help="role tab (default: %(default)s); the role's "
-                         "objective selects each model's best reasoning "
-                         "effort")
+                    help="initial role (default: %(default)s); its index and "
+                         "objective select each model's measured reasoning effort")
+    ap.add_argument("--web", action="store_true",
+                    help="serve one local-only browser session; prints the "
+                         "loopback URL and runs until Ctrl-C")
     ap.add_argument("--fixtures", metavar="DIR", default=None,
-                    help="serve saved source payloads from DIR instead of "
-                         "the network (the offline test seam; the default is "
-                         "a live fetch on every run)")
+                    help="read saved source payloads from DIR without network "
+                         "access; default: fetch live sources once per launch")
     args = ap.parse_args(argv)
 
     if not os.environ.get("LLM_RATINGS_AA_API_KEY"):
         print("error: LLM_RATINGS_AA_API_KEY is not set — get a free API key at "
               "artificialanalysis.ai and export it", file=sys.stderr)
-        return 1
-
-    # Interactive only on a real terminal: stdin AND stdout must be ttys
-    # (redirected stdout must stay batch, not ANSI frames). A missing
-    # textual dependency is reported before the fetch — no network
-    # round-trip for a setup error.
-    interactive = sys.stdin.isatty() and sys.stdout.isatty()
-    if interactive and not tui.available():
-        print("error: textual is not installed — run `make deps`",
-              file=sys.stderr)
         return 1
 
     try:
@@ -66,13 +64,13 @@ def main(argv=None):
         print(f"error: {e}", file=sys.stderr)
         return 1
 
-    if interactive:
-        return tui.run(ds, roles, args.role)
-
-    role = next(r for r in roles if r["name"] == args.role)
+    session = Session(ds, roles, args.role)
+    if args.web:
+        from .web import serve
+        return serve(session)
     print(render.ATTRIBUTION)
     print()
-    print("\n".join(render.render(ds, role)))
+    print("\n".join(render.render(ds, session.role, result=session.query())))
     return 0
 
 

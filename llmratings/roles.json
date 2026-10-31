@@ -1,37 +1,66 @@
 [
   {
-    "name": "Chores",
-    "description": "Light, repetitive agent tasks — lookups, formatting, quick edits.",
-    "capacity": "Speed first, then price: fast and cheap models; a modest capability tier (2+) is enough; short contexts are fine.",
-    "objective": "price",
-    "floor": 2
-  },
-  {
-    "name": "Generic",
-    "description": "Mixed everyday agent work with no dominant axis.",
-    "capacity": "Intelligence per dollar: the best PPI; middling speed is fine; context moderate.",
+    "name": "Explorer",
+    "description": "Find and explain existing code and repository behavior; choosing an approach belongs to Planner.",
+    "capacity": "Reasoning must trace dependencies and explain evidence accurately. Responsive exploration helps; context should cover the relevant repository paths.",
+    "index": "intelligence",
     "objective": "ppi",
     "floor": 2
   },
   {
     "name": "Researcher",
-    "description": "Deep-dive questions, analysis, and synthesis — being right beats being fast.",
-    "capacity": "Peak reasoning: the highest capability tier; speed and price are secondary; long context for long documents.",
+    "description": "Verify external facts and produce sourced findings, rather than map a local repository.",
+    "capacity": "Reasoning must compare sources and resolve conflicting evidence. Accuracy matters more than speed; long context helps with documents and citations.",
+    "index": "intelligence",
+    "objective": "ppi",
+    "floor": 2
+  },
+  {
+    "name": "Planner",
+    "description": "Choose an approach, make decisions and produce an actionable plan; implementation and worker management are separate work.",
+    "capacity": "Strong reasoning must weigh constraints and tradeoffs. Speed is secondary to sound decisions; context should cover requirements and system boundaries.",
+    "index": "intelligence",
     "objective": "cap",
     "floor": 2
   },
   {
     "name": "Coder",
-    "description": "Implementation work — the model that solves the hard part of the task.",
-    "capacity": "Peak reasoning and strong coding: highest capability tier; speed matters in tight loops; long context for big repos.",
+    "description": "Make and verify changes, including fault diagnosis, UI design, tests and documentation.",
+    "capacity": "Strong coding and reasoning must support correct changes and verification. Speed helps in edit loops; long context helps with large repositories.",
+    "index": "coding",
     "objective": "cap",
     "floor": 2
   },
   {
-    "name": "Orchestrator",
-    "description": "Plans, routes, and delegates — many cheap calls, one smart coordinator.",
-    "capacity": "Intelligence per dollar: strong reasoning without the flagship price; speed good enough for many round trips.",
+    "name": "Reviewer",
+    "description": "Independently assess changes or proposals, including security and second-opinion critique; implementing fixes is separate work.",
+    "capacity": "Careful reasoning must find defects and assess evidence independently. Thoroughness matters more than speed; context should cover the change and affected callers.",
+    "index": "coding",
+    "objective": "cap",
+    "floor": 2
+  },
+  {
+    "name": "Coordinator",
+    "description": "Divide and delegate work, manage dependencies and combine results; each worker owns its implementation.",
+    "capacity": "Reasoning must track dependencies and reconcile worker results. Responsive round trips help; context should retain the shared goal, assignments and evidence.",
+    "index": "agentic",
+    "objective": "cap",
+    "floor": 2
+  },
+  {
+    "name": "Generalist",
+    "description": "Handle mixed end-to-end work when no specialist fits, rather than replace every narrower role.",
+    "capacity": "Balanced reasoning must connect different kinds of work. Interactive speed helps; context should cover the full task and its changing requirements.",
+    "index": "intelligence",
     "objective": "ppi",
+    "floor": 2
+  },
+  {
+    "name": "Utility",
+    "description": "Produce bounded auxiliary outputs such as titles, commit messages, classifications and straightforward transformations. Small output does not imply low capability; faithful summarization and memory extraction are not automatically trivial utility work.",
+    "capacity": "Reasoning must preserve meaning and satisfy the output contract. Speed helps repeated calls; context must fit the source material even when the output is short. Bounded work is not necessarily cheap or easy.",
+    "index": "intelligence",
+    "objective": "price",
     "floor": 2
   }
 ]

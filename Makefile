@@ -1,13 +1,9 @@
 PY := python3
 
-.PHONY: run test lint deps help
+.PHONY: run test lint help
 
-run: ## Run the CLI (loads .env for LLM_RATINGS_AA_API_KEY)
-	set -a; . .env; set +a; $(PY) -m llmratings $(ARGS)
-
-deps: ## Install Python dependencies (requirements.txt)
-	# Homebrew Python is PEP 668 externally managed — no venv in this repo.
-	$(PY) -m pip install --break-system-packages -r requirements.txt
+run: ## Serve the local web app (loads .env; forwards ARGS)
+	set -a; . .env; set +a; $(PY) -m llmratings --web $(ARGS)
 
 test: ## Run the test suite
 	$(PY) -m unittest discover -s tests

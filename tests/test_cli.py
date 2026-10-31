@@ -1,21 +1,12 @@
-"""CLI contract tests — tickets 11–18. Observable output only: exit codes and
-rendered lines, run through the real CLI in a subprocess against the
-checked-in fixtures or a local stdlib HTTP origin (no external network, no
-mocks). Ticket 13's TB grades are rendered in-process through the same
-fixture seam (the batch CLI's default role is Chores/price, where most rows
-sit at low — the Researcher role's max/xhigh rows carry the TB column);
-the collapse tie-break and the wholesale row count are asserted on the
-dataset the tables are built from. Ticket 15's live fetchers run against
-the local origin via the LLM_RATINGS_HTTP_BASE seam: live output must match
-fixture-mode output, and each source's failure path must name the source
-and exit nonzero with no output. Ticket 18: roles come from roles.json
-(LLM_RATINGS_ROLES swaps the file — a test seam), objectives select each
-model's effort, the price-lens floor drops below-floor models, OpenRouter
-enrichment is best-effort (live 500 degrades to a full table)."""
+"""Behavioral consumers of real saved/temporary rating-source payloads.
+
+The batch CLI, shared selected-index query and independent source evidence use
+the same fetch/identity pipeline. Live acquisition tests use a local HTTP origin.
+"""
 
 import json
+from datetime import datetime, timezone
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -29,7 +20,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))  # in-process `import llmratings` for render tests
 FIXTURES = REPO / ".scratch" / "llm-ratings" / "fixtures" / "main"
 
-from llmratings import render  # noqa: E402  (sys.path setup above)
+from llmratings import evidence, fetch, identity, render  # noqa: E402  (sys.path setup above)
+from llmratings.session import Session  # noqa: E402
 ROLES = render.load_roles(REPO / "llmratings" / "roles.json")
 
 
@@ -46,18 +38,8 @@ def run_fixtures(env_extra=None, *args):
                    "--fixtures", str(FIXTURES), *args)
 
 
-def _row_after(lines, needle):
-    """First table row line containing needle (rows start with two spaces)."""
-    return next(ln for ln in lines if needle in ln and ln.startswith("  "))
 
-
-def _cell_at(row, at, width):
-    """Cell of a rendered row at column offset `at`, whitespace-stripped."""
-    return row[at:at + width].strip()
-
-
-# AA row template shared by the hand-built fixtures (TierBinning, EdgeFixture,
-# LiveAcquisition): one low-effort config per model.
+# Single-effort source template also used by local HTTP acquisition tests.
 AA_ROW = ('{{"id": "{i}", "name": "{name} (low)", "slug": "{slug}-low",'
           ' "model_creator": {{"name": "Acme"}},'
           ' "evaluations": {{"artificial_analysis_intelligence_index": {ii}}},'
@@ -86,9 +68,11 @@ class _LiveServer:
 
     PAGE_SIZE = 200
 
-    def __init__(self, fixtures_dir=FIXTURES, fail=None):
+    def __init__(self, fixtures_dir=FIXTURES, fail=None, page_versions=None, page_dates=None):
         self.dir = Path(fixtures_dir)
         self.fail = fail
+        self.page_versions = page_versions or {}
+        self.page_dates = page_dates or {}
         self.seen = []
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _live_handler(self))
         self.port = self.httpd.server_address[1]
@@ -126,6 +110,9 @@ class _LiveServer:
             aa = json.loads((self.dir / "aa.json").read_text())
             page = int(parse_qs(urlsplit(path).query).get("page", ["1"])[0])
             batch = aa["data"][(page - 1) * self.PAGE_SIZE: page * self.PAGE_SIZE]
+            if page in self.page_versions:
+                aa["intelligence_index_version"] = self.page_versions[page]
+            aa.update(self.page_dates.get(page, {}))
             return json.dumps(dict(aa, data=batch)).encode()
         if path.startswith("/api/v1/models"):
             p = self.dir / "or.json"
@@ -200,517 +187,864 @@ class FixtureFailure(unittest.TestCase):
         self.assertIn("frontier: ", r.stdout)
 
 
-class ChoresTable(unittest.TestCase):
-    """The default role (Chores, price lens with floor 2): each model at its
-    cheapest above-floor configuration — Luna's low config grades 1 and
-    drops out, so Luna enters at medium; the rest at low."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.r = run_fixtures()
-        assert cls.r.returncode == 0, cls.r.stderr
-        cls.lines = [ln.rstrip() for ln in cls.r.stdout.splitlines()]
-
-    def row_after(self, needle):
-        """(row, arrow-or-None) for the first table row containing needle."""
-        idx = next(i for i, ln in enumerate(self.lines) if needle in ln
-                   and ln.startswith("  "))
-        return (self.lines[idx],
-                self.lines[idx + 1] if idx + 1 < len(self.lines) else None)
-
-    def test_exit_zero_and_attribution(self):
-        self.assertEqual(self.r.returncode, 0)
-        self.assertIn("artificialanalysis.ai", self.r.stdout)
-
-    def test_role_header_with_capacity(self):
-        self.assertIn("Chores — objective price — cheapest first · floor 2",
-                      self.r.stdout)
-        self.assertIn("Chores: Light, repetitive agent tasks", self.r.stdout)
-        self.assertIn("capacity: Speed first, then price", self.r.stdout)
-
-    def test_sections_and_star(self):
-        joined = "\n".join(self.lines)
-        self.assertIn("★ frontier", joined)
-        self.assertIn("✗ dominated", joined)
-        luna, _ = self.row_after("GPT-5.6 Luna")
-        self.assertTrue(luna.endswith("*"))
-
-    def test_path_line(self):
-        path = next(ln for ln in self.lines if ln.startswith("frontier: "))
-        self.assertTrue(path.startswith(
-            "frontier: GPT-5.6 Luna low 33 @ $0.0088 →"))
-        self.assertTrue(path.endswith("→ Claude Opus 5 max 61 @ $2.34"))
-
-    def test_cheapest_first_order(self):
-        models = ["Kimi K3", "GPT-5.6 Sol", "GPT-5.5", "Claude Opus 5"]
-        idx = [next(i for i, ln in enumerate(self.lines)
-                    if m in ln and ln.startswith("  "))
-               for m in models]
-        self.assertEqual(idx, sorted(idx), "dominated rows not cheapest-first")
-
-    def test_luna_enters_at_medium(self):
-        # Luna low grades 1 (below the floor 2), so the price lens moves it
-        # to medium — the Effort column must say so.
-        luna, _ = self.row_after("GPT-5.6 Luna")
-        self.assertIn("medium", luna)
-
-    def test_tb_column_dash(self):
-        header = next(ln for ln in self.lines if "DSW" in ln and "TB" in ln)
-        self.assertIn("TB", header)
-        for model in ["GPT-5.6 Luna", "Kimi K3", "GPT-5.6 Sol", "GPT-5.5",
-                      "Claude Opus 5"]:
-            row, _ = self.row_after(model)
-            self.assertIn("—", row)
-
-    def test_grades_per_source(self):
-        # Luna medium: DSW grade 1 (its .113 score is the low end of the
-        # medium set), AA grade 2 (38.1 in a 4-model set). Kimi low: DSW has
-        # no low row → `—`, AA grade 3.
-        luna, _ = self.row_after("GPT-5.6 Luna")
-        self.assertRegex(luna, r"^\s*1\s+2\s+—\s+GPT-5\.6 Luna")
-        kimi, _ = self.row_after("Kimi K3")
-        self.assertRegex(kimi, r"^\s*—\s+3\s+—\s+Kimi K3")
-
-    def test_delta_columns(self):
-        sol, _ = self.row_after("GPT-5.6 Sol")
-        self.assertIn("+2.8", sol)
-        self.assertIn("+$0.0021", sol)
-        gpt55, _ = self.row_after("GPT-5.5")
-        self.assertIn("-5.9", gpt55)
-        self.assertIn("+$0.015", gpt55)
-        opus, _ = self.row_after("Claude Opus 5")
-        self.assertIn("+7.1", opus)
-        self.assertIn("+$0.166", opus)
-
-    def test_same_effort_arrow_preferred(self):
-        # Cross-effort Luna max gives +7.7 pts; the arrow must still pick the
-        # same-effort Sol low (+5.9) — the observable proof of the preference.
-        _, arrow = self.row_after("GPT-5.5")
-        self.assertEqual(arrow.strip(), "→ GPT-5.6 Sol low: +5.9 pts, save $0.015")
-
-    def test_cross_effort_arrows(self):
-        _, arrow = self.row_after("Kimi K3")
-        self.assertEqual(arrow.strip(), "→ GPT-5.6 Luna max: +4.6 pts, save $0.196")
-        _, arrow = self.row_after("GPT-5.6 Sol")
-        self.assertEqual(arrow.strip(), "→ GPT-5.6 Luna max: +1.8 pts, save $0.198")
-        _, arrow = self.row_after("Claude Opus 5")
-        self.assertEqual(arrow.strip(), "→ GPT-5.6 Sol medium: +3 pts, save $0.036")
-
-    def test_source_only_model_absent(self):
-        # Terra has no AA row, so no objective-selected configuration: it
-        # never enters a role table (spec §3/§4 — absent from ranked tables).
-        self.assertNotIn("gpt-5-6-terra", self.r.stdout)
-
-
-class FiveRoles(unittest.TestCase):
-    """Ticket 18: --role selects any of the roles from roles.json; each
-    renders every model at its objective-selected configuration, sorted by
-    the objective's value so the Δ columns read the ladder."""
-
-    OBJECTIVE = {"Chores": "price", "Generic": "ppi", "Researcher": "cap",
-                 "Coder": "cap", "Orchestrator": "ppi"}
-    # Combined table order (★ frontier section first, then ✗ dominated),
-    # each section on its objective's value. Hand-computed from the
-    # checked-in fixtures.
-    ORDER = {
-        "Chores": ["GPT-5.6 Luna", "Kimi K3", "GPT-5.6 Sol", "GPT-5.5",
-                   "Claude Opus 5"],
-        "Generic": ["GPT-5.6 Luna", "GPT-5.6 Sol", "Kimi K3", "GPT-5.5",
-                    "Claude Opus 5"],
-        "Researcher": ["Claude Opus 5", "GPT-5.6 Luna", "GPT-5.6 Sol",
-                       "Kimi K3", "GPT-5.5"],
-        "Coder": ["Claude Opus 5", "GPT-5.6 Luna", "GPT-5.6 Sol",
-                  "Kimi K3", "GPT-5.5"],
-        "Orchestrator": ["GPT-5.6 Luna", "GPT-5.6 Sol", "Kimi K3",
-                         "GPT-5.5", "Claude Opus 5"],
+def aa_config(key, effort="low", score=50, cost=1, coding=None, agentic=None,
+              speed=100, provider="Acme"):
+    """A synthetic source-shaped row, with independent index measurements."""
+    return {
+        "id": f"{key}-{effort}", "name": f"{key} ({effort})",
+        "slug": f"{key}-{effort}", "model_creator": {"name": provider},
+        "evaluations": {"artificial_analysis_intelligence_index": score,
+                        "artificial_analysis_coding_index": coding,
+                        "artificial_analysis_agentic_index": agentic},
+        "artificial_analysis_intelligence_index_cost":
+            {"cost_per_task": {"total_cost": cost}},
+        "performance": {"median_output_tokens_per_second": speed},
     }
 
-    @classmethod
-    def role_lines(cls, name):
-        r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
-                    "--fixtures", str(FIXTURES), "--role", name)
-        assert r.returncode == 0, r.stderr
-        return [ln.rstrip() for ln in r.stdout.splitlines()]
 
-    @classmethod
-    def setUpClass(cls):
-        cls.lines = {name: cls.role_lines(name) for name in cls.OBJECTIVE}
+class SelectionPolicy(unittest.TestCase):
+    """Policy consumers from synthetic temporary source payloads."""
 
-    def row_after(self, name, needle):
-        idx = next(i for i, ln in enumerate(self.lines[name]) if needle in ln
-                   and ln.startswith("  "))
-        return self.lines[name][idx]
+    def dataset(self, configs, included=None, tb=None, aliases=None):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        keys = {identity.aa_base_slug(r["slug"], identity.parse_aa_effort(r["name"]))
+                for r in configs}
+        included = sorted(keys) if included is None else included
+        docs = {
+            "aa.json": {"data": configs},
+            "deepswe.json": {"rows": [
+                {"model": key, "reasoning_effort": "low", "pass_at_1": 0.5}
+                for key in included]},
+            "tb.json": tb or {"listing": [], "submissions": {}},
+        }
+        for name, doc in docs.items():
+            Path(td.name, name).write_text(json.dumps(doc))
+        return identity.build(aliases or {}, fetch.fetch_all(td.name))
 
-    def test_each_role_renders_its_objective(self):
-        for name, objective in self.OBJECTIVE.items():
-            first = next(ln for ln in self.lines[name]
-                         if ln.startswith(f"{name} — objective "))
-            self.assertTrue(first.startswith(
-                f"{name} — objective {objective} —"), f"{name}: {first}")
+    def role(self, name="Explorer", **changes):
+        profile = next(r for r in ROLES if r["name"] == name)
+        if not changes:
+            return profile
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        path = Path(td.name, "roles.json")
+        path.write_text(json.dumps([dict(profile, **changes)]))
+        return render.load_roles(path)[0]
 
-    def test_floor_shown_under_price_lens_only(self):
-        chores = next(ln for ln in self.lines["Chores"]
-                      if ln.startswith("Chores — "))
-        self.assertIn("· floor 2", chores)
-        for name in ("Generic", "Researcher", "Coder", "Orchestrator"):
-            head = next(ln for ln in self.lines[name]
-                        if ln.startswith(f"{name} — "))
-            self.assertNotIn("floor", head)
+    def picks(self, result):
+        return [(r["key"], r["effort"]) for r in result["rows"]]
 
-    def test_league_axis_order(self):
-        for name, models in self.ORDER.items():
-            lines = self.lines[name]
-            idx = [next(i for i, ln in enumerate(lines)
-                        if m in ln and ln.startswith("  "))
-                   for m in models]
-            self.assertEqual(idx, sorted(idx),
-                             f"{name} rows not on their objective's order")
+    def test_exact_canonical_names_join_without_self_aliases(self):
+        tb = {"listing": [], "submissions": {
+            "fresh-tb.json": {
+                "source_filter": {"model_name": "fresh-tb",
+                                  "reasoning_effort": "max"},
+                "metrics": {"accuracy": 0.7}},
+            "unknown-tb.json": {
+                "source_filter": {"model_name": "fresh-tb-v2",
+                                  "reasoning_effort": "max"},
+                "metrics": {"accuracy": 0.9}},
+        }}
+        ds = self.dataset([
+            aa_config("fresh-alpha", score=10),
+            aa_config("fresh-beta", "medium", score=20),
+            aa_config("fresh-tb", "max", score=30),
+            aa_config("aa-only", score=999, cost=0.001),
+        ], included=["fresh-alpha", "fresh-beta", "fresh-alpha-v2"],
+            tb=tb, aliases={})
+        result = render.query(ds, self.role())
+        self.assertEqual(self.picks(result), [
+            ("fresh-tb", "max"), ("fresh-beta", "medium"), ("fresh-alpha", "low")])
+        self.assertEqual({r["key"] for r in result["unranked"]},
+                         {"dsw:fresh-alpha-v2", "tb:fresh-tb-v2"})
+        self.assertEqual({p[0] for p in result["points"]},
+                         {"fresh-alpha", "fresh-beta", "fresh-tb"})
+        self.assertFalse(any(key in ds.models for key in
+                             ("dsw:fresh-alpha", "dsw:fresh-beta", "tb:fresh-tb")))
+        self.assertEqual({r.model_key for r in ds.ratings if r.source == "tb"},
+                         {"fresh-tb", "tb:fresh-tb-v2"})
 
-    def test_mixed_efforts_per_row(self):
-        # cap (Researcher/Coder): GPT-5.5 has no max variant → its row sits
-        # at xhigh while the others sit at max.
-        for name in ("Researcher", "Coder"):
-            gpt55 = self.row_after(name, "GPT-5.5")
-            self.assertIn("xhigh", gpt55)
-            opus = self.row_after(name, "Claude Opus 5")
-            self.assertIn("max", opus)
+    def test_explicit_alias_precedes_an_exact_canonical_name(self):
+        ds = self.dataset([
+            aa_config("fresh-shadowed", score=99),
+            aa_config("fresh-target", "max", score=30),
+            aa_config("fresh-stale", score=90),
+        ], included=["fresh-shadowed", "fresh-stale"],
+            aliases={"fresh-shadowed": "fresh-target", "fresh-stale": "absent"})
+        result = render.query(ds, self.role())
+        self.assertEqual(self.picks(result), [("fresh-target", "max")])
+        self.assertEqual([r["key"] for r in result["unranked"]], ["dsw:fresh-stale"])
+        self.assertEqual({p[0] for p in result["points"]}, {"fresh-target"})
+        self.assertEqual({r.model_key for r in ds.ratings if r.source == "deepswe"},
+                         {"fresh-target", "dsw:fresh-stale"})
 
-    def test_deltas_read_the_ladder(self):
-        # Chores (price): Kimi opens the dominated section, Sol +2.8 pts
-        # from it, Opus +7.1 from GPT-5.5 — near-tie deltas on the price
-        # ladder.
-        chores = self.lines["Chores"]
-        sol = self.row_after("Chores", "GPT-5.6 Sol")
-        self.assertIn("+2.8", sol)
-        self.assertIn("+$0.0021", sol)
-        opus = self.row_after("Chores", "Claude Opus 5")
-        self.assertIn("+7.1", opus)
-        self.assertIn("+$0.166", opus)
-        # Generic (ppi): Luna is the only frontier row; Sol opens the
-        # dominated section; Kimi -2.8 pts from Sol — a near-tie visible as
-        # a small number, not swallowed.
-        generic = self.lines["Generic"]
-        kimi = self.row_after("Generic", "Kimi K3")
-        self.assertIn("-2.8", kimi)
-        self.assertIn("-$0.0021", kimi)
-        opus = self.row_after("Generic", "Claude Opus 5")
-        self.assertIn("+7.1", opus)
-        self.assertIn("+$0.166", opus)
-        # Researcher (cap): Luna -9.5 from the frontier Opus; the dominated
-        # section's Sol opens, Kimi -1.8 from Sol, GPT-5.5 -2.3 from Kimi.
-        res = self.lines["Researcher"]
-        luna = self.row_after("Researcher", "GPT-5.6 Luna")
-        self.assertIn("-9.5", luna)
-        self.assertIn("-$2.29", luna)
-        kimi = self.row_after("Researcher", "Kimi K3")
-        self.assertIn("-1.8", kimi)
-        self.assertIn("-$0.377", kimi)
-        gpt55 = self.row_after("Researcher", "GPT-5.5")
-        self.assertIn("-2.3", gpt55)
-        self.assertIn("+$0.32", gpt55)
+    def test_comma_qualified_efforts_keep_identity_and_independent_index_grades(self):
+        sonnet = aa_config("claude-sonnet-5-5", "medium", 10, 1, 30, 20)
+        sonnet["name"] = "Claude Sonnet 5.5 (Medium, Default Fallback)"
+        fable = aa_config("claude-fable-5", "max", 20, 1, 10, 30)
+        fable.update(name="Claude Fable 5 (Max, Opus 4.8 Fallback)",
+                     slug="claude-fable-5")
+        opus = aa_config("claude-opus-5", "low", 30, 1, 20, 10)
+        opus["name"] = "Claude Opus 5 (Adaptive Reasoning, Low Effort)"
+        ds = self.dataset([
+            sonnet, fable, opus,
+            aa_config("aa-only", "xhigh", 40, 1, 40, 40),
+        ], included=["claude-sonnet-5-5", "claude-fable-5", "claude-opus-5"])
+        expected = {
+            "Explorer": [("claude-opus-5", "low", 4),
+                         ("claude-fable-5", "max", 3),
+                         ("claude-sonnet-5-5", "medium", 2)],
+            "Coder": [("claude-sonnet-5-5", "medium", 4),
+                      ("claude-opus-5", "low", 3),
+                      ("claude-fable-5", "max", 2)],
+            "Coordinator": [("claude-fable-5", "max", 4),
+                            ("claude-sonnet-5-5", "medium", 3),
+                            ("claude-opus-5", "low", 2)],
+        }
+        for role, picks in expected.items():
+            with self.subTest(role=role):
+                result = render.query(ds, self.role(role))
+                self.assertEqual([(r["key"], r["effort"], r["grade"])
+                                  for r in result["rows"]], picks)
+                self.assertEqual(result["unranked"], [])
+                self.assertNotIn("aa-only", {p[0] for p in result["points"]})
+        self.assertEqual({key: ds.models[key].name for key in
+                          ("claude-sonnet-5-5", "claude-fable-5", "claude-opus-5")},
+                         {"claude-sonnet-5-5": "Claude Sonnet 5.5",
+                          "claude-fable-5": "Claude Fable 5",
+                          "claude-opus-5": "Claude Opus 5"})
 
-    def test_dash_where_no_row_at_effort(self):
-        # Kimi has no DSW low row → its Chores row shows `—` in the DSW
-        # cell while AA/TB grade from its config.
-        self.assertRegex(self.row_after("Chores", "Kimi K3"),
-                         r"^\s*—\s+3\s+—\s+Kimi K3")
+    def test_unmeasured_efforts_are_not_inferred_or_stripped_from_slugs(self):
+        names = {
+            "non-reasoning-high": "Non-reasoning (Non-reasoning, High Effort)",
+            "ambiguous-high": "Ambiguous (Low, High Effort)",
+            "unknown-high": "Unknown (Adaptive Reasoning, Turbo Effort)",
+            "qualifier-high": "Qualifier (High speed fallback)",
+            "unlabelled-high": "Unlabelled",
+        }
+        configs = [dict(aa_config(key, score=999, coding=999, agentic=999),
+                        slug=key, name=name) for key, name in names.items()]
+        configs.append(dict(aa_config("release-high", score=10, coding=10, agentic=10),
+                            slug="release-high", name="Release High (Low)"))
+        ds = self.dataset(configs, included=[*names, "release-high"])
+        for role in ("Explorer", "Coder", "Coordinator"):
+            result = render.query(ds, self.role(role))
+            self.assertEqual(self.picks(result), [("release-high", "low")])
+            self.assertEqual(result["rows"][0]["grade"], 5)
+            self.assertEqual({r["key"] for r in result["unranked"]}, set(names))
+            self.assertTrue(all("No measured" in r["reason"]
+                                for r in result["unranked"]))
+        self.assertTrue(all(r.effort is None for r in ds.ratings
+                            if r.source == "aa" and r.model_key in names))
 
-    def test_unknown_role_errors(self):
-        r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
-                    "--fixtures", str(FIXTURES), "--role", "bogus")
-        self.assertEqual(r.returncode, 2)
-        self.assertIn("invalid choice", r.stderr)
-        self.assertIn("Orchestrator", r.stderr)
+    def test_role_selects_its_index_and_one_measured_effort(self):
+        ds = self.dataset([
+            aa_config("alpha", "low", 40, 1, 10, 80),
+            aa_config("alpha", "max", 60, 6, 90, 20),
+            aa_config("beta", "medium", 50, 1, 70, 90),
+            aa_config("catalog-only", "low", 99, 0.01, 99, 99),
+        ], included=["alpha", "beta", "source-only"])
+        expected = {
+            "Explorer": [("beta", "medium"), ("alpha", "low")],
+            "Coder": [("alpha", "max"), ("beta", "medium")],
+            "Coordinator": [("beta", "medium"), ("alpha", "low")],
+            "Utility": [("beta", "medium"), ("alpha", "low")],
+        }
+        for name, picks in expected.items():
+            with self.subTest(role=name):
+                result = render.query(ds, self.role(name))
+                self.assertEqual(self.picks(result), picks)
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual([r["key"] for r in result["unranked"]],
+                                 ["dsw:source-only"])
+                self.assertIn("Artificial Analysis",
+                              result["unranked"][0]["reason"])
+                for row in result["rows"]:
+                    self.assertEqual(row["configuration"].effort, row["effort"])
+
+    def test_strict_frontier_retains_identical_and_negative_finite_points(self):
+        ds = self.dataset([
+            aa_config("beta", score=-5, cost=0),
+            aa_config("alpha", score=-5, cost=0),
+            aa_config("higher", "high", -2, 1),
+            aa_config("lower", "max", -6, 0),
+            aa_config("invalid", score=500, cost=-1),
+            aa_config("catalog-only", score=999, cost=0),
+        ], included=["alpha", "beta", "higher", "lower", "invalid"])
+        result = render.query(ds, self.role("Planner"))
+        self.assertEqual(self.picks(result), [
+            ("higher", "high"), ("alpha", "low"), ("beta", "low"), ("lower", "max")])
+        rows = {r["key"]: r for r in result["rows"]}
+        self.assertTrue(rows["alpha"]["frontier"])
+        self.assertTrue(rows["beta"]["frontier"])
+        self.assertTrue(rows["higher"]["frontier"])
+        self.assertFalse(rows["lower"]["frontier"])
+        self.assertEqual(rows["lower"]["dom"][:2], (1, 0))
+        self.assertEqual({p[0] for p in result["points"]},
+                         {"alpha", "beta", "higher", "lower"})
+        self.assertEqual([r["key"] for r in result["unranked"]], ["invalid"])
+
+    def test_highest_capability_uses_score_cost_effort_and_key(self):
+        configs = [
+            aa_config("score", score=80, cost=100),
+            aa_config("cost-choice", "low", 70, 4),
+            aa_config("cost-choice", "high", 70, 2),
+            aa_config("effort-choice", "max", 70, 2),
+            aa_config("effort-choice", "xhigh", 70, 2),
+            aa_config("effort-choice", "high", 70, 2),
+            aa_config("effort-choice", "medium", 70, 2),
+            aa_config("effort-choice", "low", 70, 2),
+            aa_config("cheaper", "max", 70, 1),
+            aa_config("beta", "medium", 70, 2),
+            aa_config("alpha", "medium", 70, 2),
+        ]
+        expected = [("score", "low"), ("cheaper", "max"),
+                    ("effort-choice", "low"), ("alpha", "medium"),
+                    ("beta", "medium"), ("cost-choice", "high")]
+        for rows in (configs, list(reversed(configs))):
+            result = render.query(self.dataset(rows), self.role("Planner"))
+            self.assertEqual(self.picks(result), expected)
+
+    def test_best_value_uses_ratio_score_cost_effort_and_key(self):
+        configs = [
+            aa_config("alpha", "low", 30, 3),
+            aa_config("alpha", "high", 40, 4),
+            aa_config("alpha", "max", 100, 20),
+            aa_config("beta", "high", 40, 4),
+            aa_config("beta", "low", 40, 4),
+            aa_config("gamma", "medium", 40, 4),
+            aa_config("ratio-winner", "max", 40, 2),
+            # Equal zero quotients and scores still compare matching cost.
+            aa_config("zero-alpha", "low", 0, 2),
+            aa_config("zero-alpha", "high", 0, 1),
+            aa_config("zero-beta", "low", 0, 2),
+            aa_config("zero-gamma", "high", 0, 1),
+        ]
+        expected = [("ratio-winner", "max"), ("beta", "low"),
+                    ("gamma", "medium"), ("alpha", "high"),
+                    ("zero-alpha", "high"), ("zero-gamma", "high"),
+                    ("zero-beta", "low")]
+        for rows in (configs, list(reversed(configs))):
+            self.assertEqual(self.picks(render.query(self.dataset(rows), self.role())),
+                             expected)
+
+    def test_lowest_price_uses_cost_score_effort_and_key_not_speed(self):
+        configs = [
+            aa_config("alpha", "low", 10, 2, speed=10000),
+            aa_config("alpha", "max", 20, 2, speed=9999),
+            aa_config("alpha", "high", 20, 2, speed=None),
+            aa_config("beta", "medium", 20, 2),
+            aa_config("gamma", "high", 20, 2),
+            aa_config("delta", "low", 20, 2),
+            aa_config("cheapest", "max", 1, 1),
+            aa_config("score-winner", "low", 30, 2),
+        ]
+        expected = [("cheapest", "max"), ("score-winner", "low"),
+                    ("delta", "low"), ("beta", "medium"),
+                    ("alpha", "high"), ("gamma", "high")]
+        for rows in (configs, list(reversed(configs))):
+            result = render.query(self.dataset(rows), self.role("Utility", floor=1))
+            self.assertEqual(self.picks(result), expected)
+
+    def test_every_effort_tie_is_in_measurement_order_then_canonical_key(self):
+        configs = [aa_config(key, effort, 40, 2, 40, 40)
+                   for key, effort in [("a-max", "max"), ("b-xhigh", "xhigh"),
+                                       ("c-high", "high"), ("d-medium", "medium"),
+                                       ("z-low", "low"), ("y-low", "low")]]
+        expected = [("y-low", "low"), ("z-low", "low"), ("d-medium", "medium"),
+                    ("c-high", "high"), ("b-xhigh", "xhigh"), ("a-max", "max")]
+        ds = self.dataset(configs)
+        for name, objective in (("Planner", "cap"), ("Explorer", "ppi"),
+                                ("Utility", "price"), ("Coder", "cap"),
+                                ("Coordinator", "cap")):
+            with self.subTest(role=name):
+                self.assertEqual(self.picks(render.query(ds, self.role(name), objective)),
+                                 expected)
+
+    def test_area_capability_has_no_cost_tie_or_index_fallback(self):
+        ds = self.dataset([
+            aa_config("alpha", "low", 1, None, 90, 40),
+            aa_config("alpha", "max", 99, 0, 90, 80),
+            aa_config("beta", "low", 100, 0, 90, 80),
+            aa_config("intel-only", "low", 999, 0.001),
+            aa_config("negative", "medium", 99, None, -10, -20),
+            aa_config("nonfinite", "low", 100, 1, float("inf"), float("nan")),
+        ])
+        for name, expected in (
+                ("Coder", [("alpha", "low"), ("beta", "low"), ("negative", "medium")]),
+                ("Coordinator", [("beta", "low"), ("alpha", "max"),
+                                 ("negative", "medium")])):
+            with self.subTest(role=name):
+                result = render.query(ds, self.role(name))
+                self.assertEqual(self.picks(result), expected)
+                self.assertEqual(result["points"], [])
+                self.assertEqual({r["key"] for r in result["unranked"]},
+                                 {"intel-only", "nonfinite"})
+                for row in result["rows"]:
+                    for field in ("cost", "ppi", "value", "price_tier", "frontier", "dom"):
+                        self.assertIsNone(row[field], field)
+                lines, display = render.table(ds, self.role(name))
+                self.assertEqual([(r["key"], r["effort"]) for r in display], expected)
+                self.assertNotIn("Benchmark task cost", "\n".join(lines))
+                opened = evidence.model_evidence(ds, result, display[0])
+                self.assertEqual(opened["alternatives"], [])
+                self.assertEqual(opened["advisory_scope"]["kind"], "unavailable")
+
+    def test_intelligence_required_data_and_usable_quotient(self):
+        ds = self.dataset([
+            aa_config("valid", score=20, cost=2),
+            aa_config("zero", score=100, cost=0),
+            aa_config("no-cost", score=999, cost=None),
+            aa_config("negative-cost", score=1000, cost=-1),
+            aa_config("no-score", score=None, cost=1),
+            aa_config("nan-score", score=float("nan"), cost=1),
+            aa_config("infinite-score", score=float("inf"), cost=1),
+            aa_config("nan-cost", score=2000, cost=float("nan")),
+            aa_config("infinite-cost", score=2000, cost=float("inf")),
+            aa_config("overflow-ratio", score=1e308, cost=5e-324),
+            aa_config("negative-score", score=-10, cost=2),
+        ])
+        self.assertEqual(self.picks(render.query(ds, self.role("Planner"))), [
+            ("overflow-ratio", "low"), ("zero", "low"), ("valid", "low"),
+            ("negative-score", "low")])
+        self.assertEqual(self.picks(render.query(ds, self.role())), [
+            ("valid", "low"), ("negative-score", "low")])
+        price = render.query(ds, self.role("Utility", floor=1))
+        self.assertEqual(self.picks(price), [
+            ("zero", "low"), ("overflow-ratio", "low"), ("valid", "low"),
+            ("negative-score", "low")])
+        zero = next(r for r in price["rows"] if r["key"] == "zero")
+        self.assertEqual(zero["cost"], 0)
+        self.assertIsNone(zero["ppi"])
+        self.assertIsNone(zero["value"])
+        self.assertTrue(all(r["reason"] for r in price["unranked"]))
+
+    def test_capability_population_precedes_cost_inclusion_and_effort_selection(self):
+        references = [aa_config(f"reference-{score}", identity.EFFORTS[n % 5],
+                                score, None, score, score)
+                      for n, score in enumerate(range(0, 100, 10))]
+        configs = references + [
+            aa_config("alpha", "low", 30, 1, 70, 50),
+            aa_config("alpha", "max", 70, 5, 30, 90),
+            aa_config("edge", score=20, cost=0.5, coding=20, agentic=20),
+            aa_config("equal-edge", score=20, cost=0.6, coding=20, agentic=20),
+            aa_config("weak", score=10, cost=0.01, coding=10, agentic=10),
+            aa_config("unpriced", "high", 80, None, 80, 80),
+        ]
+        ds = self.dataset(configs, included=["alpha", "edge", "equal-edge",
+                                            "weak", "unpriced"])
+        expected = {
+            "Planner": {"alpha": ("max", 70, 4), "edge": ("low", 20, 2),
+                        "equal-edge": ("low", 20, 2), "weak": ("low", 10, 1)},
+            "Coder": {"alpha": ("low", 70, 4), "edge": ("low", 20, 2),
+                      "equal-edge": ("low", 20, 2), "weak": ("low", 10, 1),
+                      "unpriced": ("high", 80, 5)},
+            "Coordinator": {"alpha": ("max", 90, 5), "edge": ("low", 20, 2),
+                            "equal-edge": ("low", 20, 2), "weak": ("low", 10, 1),
+                            "unpriced": ("high", 80, 5)},
+        }
+        for name, grades in expected.items():
+            result = render.query(ds, self.role(name))
+            self.assertEqual({r["key"]: (r["effort"], r["score"], r["grade"])
+                              for r in result["rows"]}, grades)
+        for name in ("Utility", "Explorer"):
+            price = render.query(ds, self.role(name), "price")
+            self.assertEqual(self.picks(price), [
+                ("edge", "low"), ("equal-edge", "low"), ("alpha", "low")])
+            self.assertEqual([r["grade"] for r in price["rows"]], [2, 2, 2])
+        self.assertIn(("weak", "low"), self.picks(render.query(ds, self.role())))
+        filtered = render.query(ds, self.role("Planner"), min_grade=5)
+        self.assertEqual(filtered["status"], "no_qualifying")
+        self.assertEqual(filtered["rows"], [])
+        self.assertIn("No qualifying configuration", filtered["reason"])
+        self.assertIn("Planner", filtered["reason"])
+        self.assertIn("grade ≥ 5", filtered["reason"])
+        self.assertEqual({r["key"] for r in filtered["excluded"]},
+                         {"alpha", "edge", "equal-edge", "weak"})
+        self.assertEqual(filtered["points"], render.query(ds, self.role("Planner"))["points"])
+
+    def test_independent_axis_grades_do_not_shrink_under_display_filter(self):
+        ds = self.dataset([
+            aa_config("alpha", score=10, cost=1, speed=10),
+            aa_config("beta", score=20, cost=2, speed=10),
+            aa_config("gamma", score=30, cost=3, speed=30),
+            aa_config("missing-timing", score=40, cost=4, speed=None),
+        ])
+        baseline = render.query(ds, self.role())
+        rows = {r["key"]: r for r in baseline["rows"]}
+        self.assertEqual((rows["alpha"]["spd"], rows["beta"]["spd"],
+                          rows["gamma"]["spd"]), (3, 3, 5))
+        self.assertIsNone(rows["missing-timing"]["spd"])
+        self.assertEqual({r["value"] for r in baseline["rows"]}, {5})
+        self.assertEqual([rows[k]["price_tier"] for k in
+                          ("alpha", "beta", "gamma", "missing-timing")], [1, 2, 3, 4])
+        narrow = render.query(ds, self.role(), min_grade=4)
+        for row in narrow["rows"]:
+            self.assertEqual(tuple(row[f] for f in ("grade", "value", "spd", "price_tier")),
+                             tuple(rows[row["key"]][f]
+                                   for f in ("grade", "value", "spd", "price_tier")))
+        added = self.dataset([
+            aa_config("alpha", score=10, cost=1, speed=10),
+            aa_config("beta", score=20, cost=2, speed=20),
+            aa_config("gamma", score=30, cost=3, speed=30),
+        ])
+        before = next(r for r in render.query(added, self.role())["rows"]
+                      if r["key"] == "beta")
+        after = self.dataset([
+            aa_config("alpha", score=10, cost=1, speed=10),
+            aa_config("beta", score=20, cost=2, speed=20),
+            aa_config("gamma", score=30, cost=3, speed=30),
+            aa_config("delta", score=40, cost=4, speed=25),
+        ])
+        after = next(r for r in render.query(after, self.role())["rows"]
+                     if r["key"] == "beta")
+        self.assertEqual((before["spd"], after["spd"]), (4, 3))
+
+    def test_timing_and_unverified_share_never_change_selected_policy(self):
+        configs = [
+            aa_config("alpha", "max", 40, 2, 40, 40, speed=9999),
+            aa_config("alpha", "low", 40, 2, 40, 40, speed=None),
+            aa_config("beta", "medium", 50, 3, 50, 50),
+        ]
+        original = self.dataset(configs)
+        for config in configs:
+            config["performance"] = {
+                "median_output_tokens_per_second": 1,
+                "median_time_to_first_answer_token_seconds": 99999,
+                "median_time_to_first_token_seconds": 0,
+                "median_end_to_end_response_time_seconds": None,
+            }
+        changed = self.dataset(configs)
+        for model in changed.models.values():
+            model.token_share_30d = 0.99
+        for name in ("Planner", "Explorer", "Utility", "Coder", "Coordinator"):
+            role = self.role(name)
+            def observed(ds):
+                result = render.query(ds, role)
+                rows = [(r["key"], r["effort"], r["score"], r["grade"],
+                         r["dsw"], r["tb"], r["value"], r["price_tier"],
+                         r["dom"], r["alternatives"])
+                        for r in result["rows"]]
+                picks = [(g["provider"], g["primary"]["key"],
+                          g["runner_up"]["key"] if g["runner_up"] else None)
+                         for g in result["picks"]]
+                return rows, picks, result["frontier_path"], result["shortcuts"]
+            self.assertEqual(observed(original), observed(changed))
+
+    def test_unsupported_area_objectives_and_empty_results_are_explicit(self):
+        ds = self.dataset([aa_config("intel-only", score=100, cost=1)])
+        for name in ("Coder", "Coordinator"):
+            for objective in ("ppi", "price"):
+                result = render.query(ds, self.role(name), objective)
+                self.assertEqual(result["status"], "unavailable_objective")
+                self.assertEqual(result["objective"], objective)
+                self.assertEqual(result["rows"], [])
+                self.assertEqual(result["points"], [])
+                self.assertIn(render.OBJECTIVE_LABEL[objective], result["reason"])
+                self.assertIn("intel-only", result["unranked"][0]["key"])
+        no_area = render.query(ds, self.role("Coder"))
+        self.assertEqual(no_area["status"], "no_qualifying")
+        self.assertIn("No qualifying configuration", no_area["reason"])
+        self.assertIn("Coding", no_area["unranked"][0]["reason"])
+        no_price = self.dataset([aa_config("unpriced", cost=None)])
+        lines, rows = render.table(no_price, self.role("Planner"))
+        self.assertEqual(rows, [])
+        output = "\n".join(lines)
+        self.assertIn("No qualifying configuration", output)
+        self.assertIn("Highest capability", output)
+        self.assertIn("Unranked included models", output)
+
+    def test_advice_remains_floor_free_and_display_filter_free(self):
+        ds = self.dataset([
+            aa_config("target", "max", 80, 10),
+            aa_config("near-one", score=79, cost=1),
+            aa_config("near-two", score=78, cost=2),
+            aa_config("near-three", score=77, cost=3),
+            aa_config("near-four", score=76, cost=4),
+        ])
+        broad = render.query(ds, self.role("Utility"))
+        strict = render.query(ds, self.role("Utility", floor=5), min_grade=5)
+        self.assertEqual(self.picks(strict), [("target", "max")])
+        self.assertEqual(strict["points"], broad["points"])
+        opened = evidence.model_evidence(ds, strict, strict["rows"][0])
+        self.assertEqual(opened["alternatives"], [
+            ("near-one", "low", 1, 79), ("near-two", "low", 2, 78),
+            ("near-three", "low", 3, 77)])
+        self.assertEqual({r["key"] for r in strict["unranked"]},
+                         {"near-one", "near-two", "near-three", "near-four"})
+
+    def test_provider_picks_use_direct_order_not_frontier_sections(self):
+        ds = self.dataset([
+            aa_config("winner", score=100, cost=5),
+            aa_config("winner", "high", score=100, cost=6),
+            aa_config("second", "max", score=99, cost=10),
+            aa_config("cheap", score=80, cost=1),
+            aa_config("only", score=90, cost=2, provider="Other"),
+            aa_config("catalog-only", score=200, cost=0, provider="Catalog"),
+        ], included=["winner", "second", "cheap", "only"])
+        result = render.query(ds, self.role("Planner"), view="picks")
+        groups = {g["provider"]: g for g in result["picks"]}
+        self.assertEqual([(groups["Acme"][slot]["key"],
+                           groups["Acme"][slot]["effort"])
+                          for slot in ("primary", "runner_up")],
+                         [("winner", "low"), ("second", "max")])
+        self.assertFalse(groups["Acme"]["runner_up"]["frontier"])
+        self.assertEqual([r["key"] for r in result["table_rows"]],
+                         ["winner", "only", "cheap", "second"])
+        self.assertEqual(groups["Other"]["primary"]["key"], "only")
+        self.assertIsNone(groups["Other"]["runner_up"])
+        self.assertEqual(groups["Other"]["reason"], "No qualifying runner-up")
+        self.assertEqual(result["creators"], ["Acme", "Catalog", "Other"])
+        self.assertEqual(result["shortcuts"],
+                         ("OpenAI", "Anthropic", "Google", "DeepSeek", "xAI"))
+        self.assertEqual([g["provider"] for g in result["providers_without_picks"]],
+                         ["Catalog"])
+        self.assertIn("inclusion", result["providers_without_picks"][0]["reason"])
+        scoped = render.query(ds, self.role("Planner"), provider="Acme", view="picks")
+        self.assertEqual([g["provider"] for g in scoped["picks"]], ["Acme"])
+        self.assertEqual({r["provider"] for r in scoped["table_rows"]}, {"Acme"})
+        empty = render.query(ds, self.role("Planner"), provider="Google")
+        self.assertEqual(empty["picks"], [])
+        self.assertEqual(empty["status"], "no_qualifying")
+        self.assertIn("Google", empty["reason"])
+        self.assertEqual(empty["creators"], result["creators"])
+        self.assertEqual(empty["shortcuts"], result["shortcuts"])
+
+    def test_creator_scope_keeps_nonselected_filter_and_floor_free_advice(self):
+        ds = self.dataset([
+            aa_config("target", "max", score=80, cost=10),
+            aa_config("peer", "max", score=81, cost=9),
+            aa_config("peer", "low", score=100, cost=11),
+            aa_config("cross", score=90, cost=1),
+            aa_config("near-one", score=79, cost=2),
+            aa_config("near-two", "high", score=78, cost=3),
+            aa_config("near-three", "medium", score=77, cost=4),
+            aa_config("near-four", "max", score=76, cost=5),
+            aa_config("too-low", score=74, cost=0.1),
+            aa_config("outsider", "max", score=100, cost=0.5, provider="Other"),
+            aa_config("catalog-only", score=100, cost=0, provider="Catalog"),
+        ], included=["target", "peer", "cross", "near-one", "near-two",
+                     "near-three", "near-four", "too-low", "outsider"])
+        global_result = render.query(ds, self.role("Planner"))
+        local = render.query(ds, self.role("Planner"), provider="Acme")
+        global_rows = {r["key"]: r for r in global_result["rows"]}
+        rows = {r["key"]: r for r in local["rows"]}
+        self.assertEqual(local["advisory_scope"]["kind"], "provider")
+        self.assertEqual(local["advisory_scope"]["provider"], "Acme")
+        self.assertEqual(global_result["advisory_scope"]["kind"], "global")
+        self.assertEqual(rows["peer"]["effort"], "low")
+        self.assertTrue(rows["peer"]["frontier"])
+        self.assertFalse(global_rows["peer"]["frontier"])
+        self.assertEqual(rows["target"]["dom"], (1, 1, "peer", "max", 81, 9))
+        self.assertEqual(global_rows["target"]["dom"],
+                         (20, 9.5, "outsider", "max", 100, 0.5))
+        self.assertEqual(rows["target"]["alternatives"], [
+            ("cross", "low", 1, 90), ("near-one", "low", 2, 79),
+            ("near-two", "high", 3, 78)])
+        self.assertEqual(global_rows["target"]["alternatives"], [
+            ("outsider", "max", 0.5, 100), ("cross", "low", 1, 90),
+            ("near-one", "low", 2, 79)])
+        self.assertEqual(local["frontier_path"], [
+            ("too-low", "low", 0.1, 74), ("cross", "low", 1, 90),
+            ("peer", "low", 11, 100)])
+        self.assertEqual(global_result["frontier_path"],
+                         [("too-low", "low", 0.1, 74), ("outsider", "max", 0.5, 100)])
+        strict = render.query(ds, self.role("Utility", floor=5),
+                              min_grade=5, provider="Acme")
+        self.assertEqual(strict["points"], local["points"])
+        self.assertEqual(strict["frontier_path"], local["frontier_path"])
+        self.assertNotIn("catalog-only", {p[0] for p in local["points"]})
+        opened = evidence.model_evidence(ds, local, rows["target"])
+        self.assertEqual(opened["advisory_scope"]["label"], "Creator-local comparison — Acme")
+        self.assertEqual(opened["dom"], (1, 1, "peer", "max", 81, 9))
+        self.assertEqual(opened["alternatives"], [
+            ("cross", "low", 1, 90), ("near-one", "low", 2, 79),
+            ("near-two", "high", 3, 78)])
+        restored = render.query(ds, self.role("Planner"), provider=None)
+        self.assertEqual(restored["frontier_path"], global_result["frontier_path"])
+        self.assertEqual(restored["rows"], global_result["rows"])
+
+    def test_provider_display_exclusions_keep_selected_effort_and_measurement_reasons(self):
+        ds = self.dataset([
+            aa_config("cheap-effort", "low", score=10, cost=1),
+            aa_config("cheap-effort", "max", score=100, cost=100),
+            aa_config("unpriced", score=90, cost=None),
+            aa_config("other", score=50, cost=1, provider="Other"),
+            aa_config("catalog", score=200, cost=1, provider="Catalog"),
+        ], included=["cheap-effort", "unpriced", "other", "source-only"])
+        broad = render.query(ds, self.role())
+        narrow = render.query(ds, self.role(), provider="Acme", min_grade=5)
+        self.assertEqual(narrow["status"], "no_qualifying")
+        self.assertEqual(narrow["rows"], [])
+        self.assertEqual(narrow["picks"], [])
+        self.assertEqual([(r["key"], r["effort"]) for r in narrow["excluded"]],
+                         [("cheap-effort", "low")])
+        excluded = narrow["excluded"][0]
+        self.assertEqual(excluded["configuration"].effort, "low")
+        self.assertIn("Capability display", excluded["reason"])
+        self.assertEqual([r["key"] for r in narrow["unranked"]], ["unpriced"])
+        self.assertIn("task cost", narrow["unranked"][0]["reason"])
+        self.assertIsNone(narrow["unranked"][0]["configuration"])
+        self.assertIn("dsw:source-only", {r["key"] for r in broad["unranked"]})
+        self.assertEqual({r["provider"] for r in narrow["excluded"] + narrow["unranked"]},
+                         {"Acme"})
+        self.assertIn("Explorer", narrow["reason"])
+        self.assertIn("Acme", narrow["reason"])
+        self.assertIn("grade ≥ 5", narrow["reason"])
+        reasons = narrow["providers_without_picks"][0]
+        self.assertIn("Capability display", reasons["reason"])
+        self.assertIn("task cost", reasons["reason"])
+        self.assertEqual(reasons["excluded"], narrow["excluded"])
+        selected = next(r for r in broad["rows"] if r["key"] == "cheap-effort")
+        for field in ("configuration", "score", "grade", "dsw", "tb",
+                      "value", "spd", "price_tier"):
+            self.assertEqual(excluded[field], selected[field])
+        self.assertEqual(narrow["creators"], ["Acme", "Catalog", "Other"])
+        self.assertEqual(narrow["shortcuts"], broad["shortcuts"])
+
+    def test_scoped_area_picks_never_expose_intelligence_cost_advice(self):
+        ds = self.dataset([
+            aa_config("alpha", "max", score=100, cost=0, coding=50, agentic=60),
+            aa_config("alpha", "low", score=1, cost=100, coding=50, agentic=60),
+            aa_config("beta", "low", score=100, cost=0, coding=50, agentic=60),
+            aa_config("other", score=100, cost=0, coding=100, agentic=100,
+                      provider="Other"),
+        ])
+        for name in ("Coder", "Coordinator"):
+            result = render.query(ds, self.role(name), provider="Acme", view="picks")
+            self.assertEqual(self.picks(result), [("alpha", "low"), ("beta", "low")])
+            self.assertEqual(result["points"], [])
+            self.assertEqual(result["frontier_path"], [])
+            self.assertEqual(result["advisory_scope"]["kind"], "unavailable")
+            self.assertEqual(result["picks"][0]["primary"]["key"], "alpha")
+            self.assertEqual(result["picks"][0]["runner_up"]["key"], "beta")
+            for row in result["rows"]:
+                self.assertIsNone(row["frontier"])
+                self.assertIsNone(row["dom"])
+                self.assertIsNone(row["cost"])
+                self.assertEqual(row["alternatives"], [])
+            for objective in ("ppi", "price"):
+                unavailable = render.query(ds, self.role(name), objective,
+                                           min_grade=4, provider="Acme", view="picks")
+                self.assertEqual(unavailable["status"], "unavailable_objective")
+                self.assertEqual(unavailable["objective"], objective)
+                self.assertEqual(unavailable["min_grade"], 4)
+                self.assertEqual(unavailable["provider"], "Acme")
+                self.assertEqual(unavailable["view"], "picks")
+                self.assertEqual(unavailable["picks"], [])
+                self.assertIn(name, unavailable["reason"])
+                self.assertIn("Acme", unavailable["reason"])
+                self.assertIn("grade ≥ 4", unavailable["reason"])
+                self.assertEqual({r["key"] for r in unavailable["unranked"]},
+                                 {"alpha", "beta"})
+                self.assertEqual({r["action"] for r in unavailable["recovery_actions"]},
+                                 {"all_providers", "clear_capability",
+                                  "highest_capability", "role_default"})
+
+    def test_unmeasured_rows_do_not_shape_configuration_grades(self):
+        unmeasured = aa_config("unmeasured", score=999, coding=999, agentic=999)
+        unmeasured.update(name="unmeasured", slug="unmeasured")
+        ds = self.dataset([
+            aa_config("alpha", "low", 10, 1, 10, 10),
+            aa_config("beta", "max", 20, 2, 20, 20),
+            unmeasured,
+        ])
+        for name in ("Planner", "Coder", "Coordinator"):
+            result = render.query(ds, self.role(name))
+            self.assertEqual({r["key"]: r["grade"] for r in result["rows"]},
+                             {"alpha": 3, "beta": 5})
+            self.assertEqual(result["unranked"][0]["key"], "unmeasured")
+            self.assertIn("measured", result["unranked"][0]["reason"])
 
 
 class RolesFile(unittest.TestCase):
-    """Ticket 18: roles.json is the config surface — a role added to the
-    file creates a tab (LLM_RATINGS_ROLES swaps the file; the seam mirrors
-    LLM_RATINGS_HTTP_BASE)."""
+    def test_approved_catalog_order_and_cli_names(self):
+        expected = [
+            ("Explorer", "intelligence", "ppi"), ("Researcher", "intelligence", "ppi"),
+            ("Planner", "intelligence", "cap"), ("Coder", "coding", "cap"),
+            ("Reviewer", "coding", "cap"), ("Coordinator", "agentic", "cap"),
+            ("Generalist", "intelligence", "ppi"), ("Utility", "intelligence", "price")]
+        self.assertEqual([(r["name"], r["index"], r["objective"]) for r in ROLES], expected)
+        self.assertEqual({r["floor"] for r in ROLES}, {2})
+        for name in ("bogus", "Chores", "Generic", "Orchestrator"):
+            result = run_fixtures(None, "--role", name)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("invalid choice", result.stderr)
+            self.assertIn("Coordinator", result.stderr)
 
-    SIX = [
-        {"name": "Mail Sorter", "description": "Triage an inbox.",
-         "capacity": "Fast and cheap; speed matters.", "objective": "price"},
-        {"name": "Chores", "description": "Light, repetitive agent tasks.",
-         "capacity": "Speed first, then price.", "objective": "price",
-         "floor": 2},
-        {"name": "Generic", "description": "Mixed everyday work.",
-         "capacity": "Best PPI.", "objective": "ppi", "floor": 2},
-        {"name": "Researcher", "description": "Deep-dive questions.",
-         "capacity": "Peak reasoning.", "objective": "cap", "floor": 2},
-        {"name": "Coder", "description": "Implementation work.",
-         "capacity": "Peak reasoning.", "objective": "cap", "floor": 2},
-        {"name": "Orchestrator", "description": "Plans and delegates.",
-         "capacity": "Best PPI.", "objective": "ppi", "floor": 2},
-    ]
+    def run_profile(self, profile, *args):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        path = Path(td.name, "roles.json")
+        path.write_text(json.dumps(profile))
+        return run_fixtures({"LLM_RATINGS_AA_API_KEY": "dummy",
+                             "LLM_RATINGS_ROLES": str(path)}, *args)
 
-    def test_added_role_renders_and_defaults_follow_file_order(self):
-        # Mail Sorter sits FIRST in the file → it becomes the default tab
-        # (file order is authoritative), and its omitted floor defaults to 2.
-        with tempfile.TemporaryDirectory() as td:
-            Path(td, "roles.json").write_text(json.dumps(self.SIX))
-            env = {"LLM_RATINGS_AA_API_KEY": "dummy",
-                   "LLM_RATINGS_ROLES": str(Path(td, "roles.json"))}
-            r = run_cli(env, "--fixtures", str(FIXTURES))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("Mail Sorter — objective price — cheapest first · floor 2",
-                      r.stdout)
-        self.assertNotIn("Chores — objective", r.stdout)
+    def test_edited_catalog_changes_selected_index_objective_and_default(self):
+        custom = dict(ROLES[0], name="Mail Sorter", index="coding", objective="cap")
+        custom.pop("floor")
+        result = self.run_profile([custom, ROLES[0]])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Mail Sorter — Coding — Highest capability", result.stdout)
+        self.assertIn("GPT-5.6 Sol", result.stdout)
+        self.assertIn("Extra high", result.stdout)
+        self.assertIn("78.3", result.stdout)
+        self.assertNotIn("frontier:", result.stdout)
+        explicit = self.run_profile([ROLES[0], custom], "--role", "Mail Sorter")
+        self.assertEqual(explicit.stdout, result.stdout)
+        changed = self.run_profile([dict(custom, index="agentic")])
+        self.assertIn("Mail Sorter — Agentic — Highest capability", changed.stdout)
+        self.assertIn("55.3", changed.stdout)
 
-    def test_added_role_selectable_by_name(self):
-        with tempfile.TemporaryDirectory() as td:
-            Path(td, "roles.json").write_text(json.dumps(self.SIX))
-            env = {"LLM_RATINGS_AA_API_KEY": "dummy",
-                   "LLM_RATINGS_ROLES": str(Path(td, "roles.json"))}
-            r = run_cli(env, "--fixtures", str(FIXTURES), "--role", "Mail Sorter")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("Mail Sorter — objective price", r.stdout)
+    def test_recognized_unsupported_profile_stays_selected(self):
+        result = self.run_profile([dict(ROLES[3], objective="ppi")])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Coder — Coding — Best value", result.stdout)
+        self.assertIn("Unavailable objective", result.stdout)
+        self.assertNotIn("Direct Coding score order", result.stdout)
 
-    def test_corrupt_roles_file_errors_cleanly(self):
-        with tempfile.TemporaryDirectory() as td:
-            Path(td, "roles.json").write_text('{"name": "not a list"}')
-            r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy",
-                         "LLM_RATINGS_ROLES": str(Path(td, "roles.json"))},
-                        "--fixtures", str(FIXTURES))
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("roles", r.stderr.lower())
+    def test_malformed_profiles_fail_with_actionable_startup_errors(self):
+        malformed = [
+            ({"name": "not a list"}, "non-empty list"), ([], "non-empty list"),
+            ([None], "not an object"), ([dict(ROLES[0], name=" ")], "name"),
+            ([dict(ROLES[0], description=None)], "description"),
+            ([dict(ROLES[0], capacity="")], "capacity"),
+            ([dict(ROLES[0], index="vision")], "index"),
+            ([dict(ROLES[0], index=[])], "index"),
+            ([dict(ROLES[0], objective="speed")], "objective"),
+            ([dict(ROLES[0], objective={})], "objective"),
+            ([dict(ROLES[0], floor=True)], "floor"),
+            ([dict(ROLES[0], floor=0)], "floor"),
+            ([ROLES[0], ROLES[0]], "repeats role name"),
+        ]
+        for profiles, error in malformed:
+            with self.subTest(profiles=profiles):
+                result = self.run_profile(profiles)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(error, result.stderr)
 
 
-class PriceFloor(unittest.TestCase):
-    """Ticket 18: under the price lens, a model whose configurations all
-    grade below the role's floor does not appear; under cap it still does —
-    the floor is a price-lens filter, not an inclusion rule."""
 
-    @staticmethod
-    def aa_row(i, name, slug, ii, cost, spd, effort):
-        return {"id": i, "name": f"{name} ({effort})",
-                "slug": f"{slug}-{effort}",
-                "model_creator": {"name": "Acme"},
-                "evaluations": {"artificial_analysis_intelligence_index": ii},
-                "artificial_analysis_intelligence_index_cost":
-                    {"cost_per_task": {"total_cost": cost}},
-                "performance": {"median_output_tokens_per_second": spd}}
-
+class SavedPolicy(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Low scores {10, 20, 30, 50, 60} → grades 1,2,3,4,5; max scores
-        # {30, 35, 40, 55, 70} → 1,2,3,4,5. Luna grades 1 at both efforts →
-        # below floor 2 everywhere; Kimi and Sol qualify at low. The two
-        # filler models are AA-only (no DSW/TB rating) so they shape the
-        # grade bins without ever entering the tables.
-        cls.td = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(cls.td.cleanup)
-        aa = {"data": [
-            cls.aa_row("u1", "GPT-5.6 Luna", "gpt-5-6-luna", 10, 0.1, 100, "low"),
-            cls.aa_row("u2", "GPT-5.6 Luna", "gpt-5-6-luna", 30, 0.2, 110, "max"),
-            cls.aa_row("u3", "Kimi K3", "kimi-k3", 50, 0.3, 120, "low"),
-            cls.aa_row("u4", "Kimi K3", "kimi-k3", 55, 0.6, 130, "max"),
-            cls.aa_row("u5", "GPT-5.6 Sol", "gpt-5-6-sol", 60, 0.5, 140, "low"),
-            cls.aa_row("u6", "GPT-5.6 Sol", "gpt-5-6-sol", 70, 1.0, 150, "max"),
-            cls.aa_row("u7", "GPT-5.4", "gpt-5-4", 20, 9.9, 160, "low"),
-            cls.aa_row("u8", "GPT-5.4", "gpt-5-4", 35, 9.9, 170, "max"),
-            cls.aa_row("u9", "GPT-5.3", "gpt-5-3", 30, 9.9, 180, "low"),
-            cls.aa_row("uA", "GPT-5.3", "gpt-5-3", 40, 9.9, 190, "max"),
-        ]}
-        Path(cls.td.name, "aa.json").write_text(json.dumps(aa))
-        ds = {"rows": [
-            {"model": "gpt-5-6-luna", "reasoning_effort": "low", "pass_at_1": 0.2},
-            {"model": "kimi-k3", "reasoning_effort": "low", "pass_at_1": 0.5},
-            {"model": "gpt-5-6-sol", "reasoning_effort": "low", "pass_at_1": 0.6},
-        ]}
-        Path(cls.td.name, "deepswe.json").write_text(json.dumps(ds))
-        Path(cls.td.name, "tb.json").write_text(
-            json.dumps({"listing": [], "submissions": {}}))
+        cls.ds = identity.build(
+            identity.load_aliases(REPO / "llmratings" / "aliases.json"),
+            fetch.fetch_all(FIXTURES))
+        cls.roles = {r["name"]: r for r in ROLES}
 
-    def lines_for(self, role):
-        r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
-                    "--fixtures", self.td.name, "--role", role)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        return [ln.rstrip() for ln in r.stdout.splitlines()]
+    def test_all_shipped_roles_have_hand_computed_direct_order_and_efforts(self):
+        value = [("gpt-5-6-luna", "low"), ("gpt-5-6-sol", "low"),
+                 ("kimi-k3", "low"), ("gpt-5-5", "low"), ("claude-opus-5", "low")]
+        capability = [("claude-opus-5", "max"), ("gpt-5-6-sol", "max"),
+                      ("kimi-k3", "max"), ("gpt-5-5", "xhigh"), ("gpt-5-6-luna", "max")]
+        coding = [("gpt-5-6-sol", "xhigh"), ("claude-opus-5", "max"),
+                  ("kimi-k3", "max"), ("gpt-5-5", "xhigh"), ("gpt-5-6-luna", "max")]
+        agentic = [("claude-opus-5", "max"), ("gpt-5-6-sol", "max"),
+                   ("kimi-k3", "max"), ("gpt-5-6-luna", "max"), ("gpt-5-5", "xhigh")]
+        price = [("gpt-5-6-luna", "xhigh"), ("kimi-k3", "low"),
+                 ("gpt-5-6-sol", "low"), ("claude-opus-5", "low"), ("gpt-5-5", "medium")]
+        expected = {"Explorer": value, "Researcher": value, "Planner": capability,
+                    "Coder": coding, "Reviewer": coding, "Coordinator": agentic,
+                    "Generalist": value, "Utility": price}
+        for name, picks in expected.items():
+            with self.subTest(role=name):
+                result = render.query(self.ds, self.roles[name])
+                self.assertEqual([(r["key"], r["effort"]) for r in result["rows"]], picks)
 
-    def test_below_floor_model_absent_under_price(self):
-        # Luna's configs are on the frontier path (the envelope is
-        # cross-effort and floor-free), but no table ROW may carry it: the
-        # floor filter is per-model row selection.
-        lines = self.lines_for("Chores")
-        rows = [ln for ln in lines if ln.startswith("  ")]
-        self.assertFalse(any("GPT-5.6 Luna" in ln for ln in rows),
-                         "below-floor model must not appear as a row")
-        self.assertTrue(any("Kimi K3" in ln for ln in rows))
-        self.assertTrue(any("GPT-5.6 Sol" in ln for ln in rows))
+    def test_batch_defaults_and_source_only_evidence_are_reachable(self):
+        result = run_fixtures()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Explorer — Intelligence — Best value", result.stdout)
+        self.assertIn(render.ATTRIBUTION, result.stdout)
+        self.assertIn("Unranked included models", result.stdout)
+        query = render.query(self.ds, self.roles["Explorer"])
+        self.assertTrue(query["unranked"])
+        self.assertTrue(all(r["measurements"] and r["configuration"] is None
+                            for r in query["unranked"]))
 
-    def test_same_model_present_under_cap(self):
-        # The floor only applies under the price lens: cap selects Luna's
-        # max configuration (30 > 20) and it renders at max effort.
-        lines = self.lines_for("Researcher")
-        luna = next(ln for ln in lines if "GPT-5.6 Luna" in ln
-                    and ln.startswith("  "))
-        self.assertIn("max", luna)
+    def test_model_table_sections_do_not_replace_direct_objective_order(self):
+        role = self.roles["Planner"]
+        direct = render.query(self.ds, role)["rows"]
+        _, visible = render.table(self.ds, role)
+        self.assertEqual([r["model"] for r in visible], [
+            "Claude Opus 5", "GPT-5.6 Luna", "GPT-5.6 Sol", "Kimi K3", "GPT-5.5"])
+        self.assertNotEqual([r["key"] for r in direct], [r["key"] for r in visible])
+        for section in ([r for r in visible if r["frontier"]],
+                        [r for r in visible if not r["frontier"]]):
+            self.assertIsNone(section[0]["score_change"])
+            self.assertIsNone(section[0]["cost_change"])
+        sol, kimi, gpt = visible[2:]
+        self.assertAlmostEqual(kimi["score_change"], -1.8)
+        self.assertAlmostEqual(kimi["cost_change"], -0.3773)
+        self.assertAlmostEqual(gpt["score_change"], -2.3)
+        self.assertIsNone(sol["score_change"])
 
+    def test_real_shared_session_projections_and_batch_keep_scope_and_grades(self):
+        state = Session(self.ds, ROLES)
+        table = state.query()
+        self.assertEqual(table["role"]["name"], "Explorer")
+        self.assertEqual(table["view"], "table")
+        self.assertEqual(table["provider_label"], "All providers")
+        self.assertEqual([(r["key"], r["effort"]) for r in table["table_rows"]][:1],
+                         [("gpt-5-6-luna", "low")])
+        picks = state.set_view("picks")
+        openai = next(g for g in picks["picks"] if g["provider"] == "OpenAI")
+        self.assertEqual([(openai[slot]["key"], openai[slot]["effort"])
+                          for slot in ("primary", "runner_up")],
+                         [("gpt-5-6-luna", "low"), ("gpt-5-6-sol", "low")])
+        self.assertEqual({g["provider"] for g in picks["picks"]},
+                         {"OpenAI", "Anthropic", "Kimi"})
+        self.assertEqual({r["key"] for r in picks["unranked"]},
+                         {"dsw:qwen3-8-max", "dsw:gpt-5-6-terra"})
+        state.set_role("Planner")
+        broad = state.query()
+        baseline = {r["key"]: r for r in broad["rows"]}
+        narrow = state.set_provider("OpenAI")
+        self.assertEqual(narrow["advisory_scope"]["kind"], "provider")
+        self.assertEqual(narrow["view"], "picks")
+        openai = narrow["picks"][0]
+        self.assertEqual([(openai[slot]["key"], openai[slot]["effort"])
+                          for slot in ("primary", "runner_up")],
+                         [("gpt-5-6-sol", "max"), ("gpt-5-5", "xhigh")])
+        filtered = state.set_min_grade(5)
+        for row in filtered["rows"] + filtered["excluded"]:
+            for field in ("configuration", "score", "grade", "dsw", "tb",
+                          "value", "spd", "price_tier"):
+                self.assertEqual(row[field], baseline[row["key"]][field])
+        self.assertEqual(filtered["creators"], broad["creators"])
+        self.assertEqual(filtered["shortcuts"], broad["shortcuts"])
+        lines, displayed = render.table(self.ds, state.role, result=filtered)
+        self.assertEqual(displayed, filtered["table_rows"])
+        self.assertIn("Provider selection: OpenAI", "\n".join(lines))
+        state.set_min_grade(None)
+        restored = state.recover("all_providers")
+        self.assertEqual(restored["frontier_path"], broad["frontier_path"])
+        self.assertEqual(restored["rows"], broad["rows"])
+        self.assertIs(state.ds, self.ds)
+        batch = run_fixtures(None, "--role", "Explorer")
+        self.assertEqual(batch.returncode, 0, batch.stderr)
+        self.assertIn("Provider selection: All providers", batch.stdout)
+        self.assertIn("Global comparison — All providers", batch.stdout)
 
-class TierColumns(unittest.TestCase):
-    """Ticket 14: the Spd column renders the speed tier (AA median output
-    tokens/s at the row's effort, 5 = fastest); a row without AA speed
-    shows a dash. Benchmark-run durations never enter this axis."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.r = run_fixtures()
-        assert cls.r.returncode == 0, cls.r.stderr
-        cls.lines = [ln.rstrip() for ln in cls.r.stdout.splitlines()]
-        header = next(ln for ln in cls.lines if ln.startswith("DSW"))
-        cls.spd_at = header.index("Spd")
-
-    def row_after(self, needle):
-        return _row_after(self.lines, needle)
-
-    def spd_of(self, row):
-        return _cell_at(row, self.spd_at, 4)
-
-    def test_spd_renders_speed_tier(self):
-        # Chores speeds: Luna medium 156.1, GPT-5.5 low 71.8, Sol low 62.1,
-        # Opus low 53.8, Kimi low 35.0 -> five distinct values -> tiers
-        # 5,4,3,2,1 (5 = fastest).
-        for model, expected in [("GPT-5.6 Luna", "5"), ("GPT-5.5", "4"),
-                                ("GPT-5.6 Sol", "3"), ("Claude Opus 5", "2"),
-                                ("Kimi K3", "1")]:
-            self.assertEqual(self.spd_of(self.row_after(model)), expected, model)
-
-
-class TierBinning(unittest.TestCase):
-    """Ticket 14 binning over small sets, observed through the Spd column:
-    fewer than five populated tiers, equal values never split across bins,
-    tiers recompute from the data of the run, and no AA price -> no PPI."""
-
-    AA = AA_ROW
-
-    MODELS = [("gpt-5-6-luna", "GPT-5.6 Luna"), ("gpt-5-6-sol", "GPT-5.6 Sol"),
-              ("claude-opus-5", "Claude Opus 5"), ("gpt-5-5", "GPT-5.5")]
-
-    def lines_for(self, speeds, costs=None, role="Chores"):
-        """Run the CLI on a hand-built fixture: one low-effort config per
-        model, AA rows carrying the given speeds. Returns stdout lines."""
-        models = self.MODELS[:len(speeds)]
-        costs = costs or [0.1 + 0.1 * n for n in range(1, len(speeds) + 1)]
-        with tempfile.TemporaryDirectory() as td:
-            aa = {"data": [json.loads(self.AA.format(
-                i=f"u{n}", name=name, slug=slug,
-                ii=30 + n, cost=costs[n - 1], spd=s))
-                for n, ((slug, name), s) in enumerate(zip(models, speeds), 1)]}
-            Path(td, "aa.json").write_text(json.dumps(aa))
-            ds = {"rows": [{"model": slug, "reasoning_effort": "low",
-                            "pass_at_1": 0.1 * n}
-                           for n, (slug, _) in enumerate(models, 1)]}
-            Path(td, "deepswe.json").write_text(json.dumps(ds))
-            # Empty TB set — this fixture is about the tier bins, not the
-            # TB source; the merged CLI still requires the file (ticket 13).
-            Path(td, "tb.json").write_text(
-                json.dumps({"listing": [], "submissions": {}}))
-            r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
-                        "--fixtures", td, "--role", role)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            lines = [ln.rstrip() for ln in r.stdout.splitlines()]
-            header = next(ln for ln in lines if ln.startswith("DSW"))
-            self.spd_at = header.index("Spd")
-            return lines
-
-    def spd_of(self, lines, model):
-        return _cell_at(_row_after(lines, model), self.spd_at, 4)
-
-    def test_equal_speeds_share_a_bin(self):
-        # Three models, two distinct speeds: the equal pair keeps one tier and
-        # only two of the five tiers are populated.
-        lines = self.lines_for([10, 10, 30])
-        self.assertEqual(self.spd_of(lines, "GPT-5.6 Luna"),
-                         self.spd_of(lines, "GPT-5.6 Sol"))
-        self.assertEqual({self.spd_of(lines, name) for _, name in self.MODELS[:3]},
-                         {"5", "3"})
-
-    def test_tiers_recompute_from_run_data(self):
-        # Same model set plus one more speed: Model 2's bin changes because
-        # the set changed — tiers come from the data of the run, not a table.
-        a = self.lines_for([10, 20, 30])
-        b = self.lines_for([10, 20, 30, 25])
-        self.assertEqual(self.spd_of(a, "GPT-5.6 Sol"), "4")
-        self.assertEqual(self.spd_of(b, "GPT-5.6 Sol"), "3")
-
-    def test_no_price_no_ppi_but_speed_renders(self):
-        # Luna has an AA row with no per-task cost: PPI n/a (no value tier),
-        # while the speed tier still grades from tokens/s. The price lens
-        # cannot select an unpriced config, so the cap lens (Researcher) is
-        # the view that renders it.
-        lines = self.lines_for([100, 50], costs=["null", 0.5], role="Researcher")
-        header = next(ln for ln in lines if ln.startswith("DSW"))
-        ppi_at = header.index("PPI")
-        luna = _row_after(lines, "GPT-5.6 Luna")
-        self.assertEqual(_cell_at(luna, ppi_at, 5), "n/a")
-        self.assertEqual(self.spd_of(lines, "GPT-5.6 Luna"), "5")
-
-
-class EdgeFixture(unittest.TestCase):
-    """Hand-built edge fixture (spec §Test strategy): equal-cost tie on the
-    frontier and an AA-only model that must stay out of the envelope."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.td = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(cls.td.cleanup)
-        aa = {"data": [
-            json.loads(AA_ROW.format(i="u1", name="GPT-5.6 Luna",
-                                     slug="gpt-5-6-luna", ii=50, cost=1.0,
-                                     spd=1000)),
-            json.loads(AA_ROW.format(i="u2", name="GPT-5.6 Sol",
-                                     slug="gpt-5-6-sol", ii=60, cost=1.0,
-                                     spd=1000)),
-            json.loads(AA_ROW.format(i="u3", name="Kimi K3",
-                                     slug="kimi-k3", ii=90, cost=0.5,
-                                     spd=1000)),
-        ], "intelligence_index_version": 4.1, "tier": "free",
-            "pagination": {"page": 1, "page_size": 200, "total_pages": 1,
-                           "has_more": False}}
-        Path(cls.td.name, "aa.json").write_text(json.dumps(aa))
-        ds = {"rows": [
-            {"model": "gpt-5-6-luna", "reasoning_effort": "low",
-             "pass_at_1": 50},
-            {"model": "gpt-5-6-sol", "reasoning_effort": "low",
-             "pass_at_1": 60},
-        ]}
-        Path(cls.td.name, "deepswe.json").write_text(json.dumps(ds))
-        # Empty TB set — this fixture is about the frontier, not the TB source.
-        Path(cls.td.name, "tb.json").write_text(
-            json.dumps({"listing": [], "submissions": {}}))
-        cls.r = run_cli({"LLM_RATINGS_AA_API_KEY": "dummy"},
-                        "--fixtures", cls.td.name)
-        assert cls.r.returncode == 0, cls.r.stderr
-        cls.lines = [ln.rstrip() for ln in cls.r.stdout.splitlines()]
-
-    def test_equal_cost_keeps_only_higher_index(self):
-        # Both configs cost $1.00; the 60-index one must dominate the 50.
-        path = next(ln for ln in self.lines if ln.startswith("frontier: "))
-        self.assertEqual(path, "frontier: GPT-5.6 Sol low 60 @ $1.00")
-        star = next(ln for ln in self.lines
-                    if ln.startswith("  ") and ln.endswith("*"))
-        self.assertIn("GPT-5.6 Sol", star)
-        self.assertNotIn("GPT-5.6 Luna", star)
-
-    def test_aa_only_model_never_enters(self):
-        # Kimi K3 (90 @ $0.50, the cheapest AND best) has no DSW/TB rating:
-        # spec §3 keeps it out of the path line, sections, and arrows.
-        self.assertNotIn("Kimi", self.r.stdout)
-
-    def test_dominated_row_arrow_without_saving(self):
-        luna = next(i for i, ln in enumerate(self.lines)
-                    if "GPT-5.6 Luna" in ln)
-        self.assertEqual(self.lines[luna + 1].strip(),
-                         "→ GPT-5.6 Sol low: +10 pts")
+    def test_same_effort_replacement_precedes_greater_cross_effort_gain(self):
+        rows = {r["key"]: r for r in render.query(
+            self.ds, self.roles["Explorer"])["rows"]}
+        gpt = rows["gpt-5-5"]["dom"]
+        self.assertEqual(gpt[2:4], ("gpt-5-6-sol", "low"))
+        self.assertAlmostEqual(gpt[0], 5.9)
+        self.assertAlmostEqual(gpt[1], 0.015)
+        # Luna Maximum has a larger score gain, but is not same-effort.
+        fallback = rows["kimi-k3"]["dom"]
+        self.assertEqual(fallback[2:4], ("gpt-5-6-luna", "max"))
+        self.assertAlmostEqual(fallback[0], 4.6)
+        self.assertAlmostEqual(fallback[1], 0.1956)
 
 
 class TerminalBench(unittest.TestCase):
-    """Ticket 13 — Terminal-Bench v2.1 as a third source. The batch CLI's
-    default role (Chores) renders low/medium rows, where TB is `—`; the
-    cap-lens tables (Researcher/Coder) carry max/xhigh rows, so the TB
-    grade column is observable end to end through the same fixture seam
-    (fetch → identity → tier → render)."""
+    """Independent effort reference sets after best-agent collapse."""
 
     TB_MODELS = {"gpt-5-6-luna", "gpt-5-6-sol", "gpt-5-5", "claude-opus-5"}
 
@@ -721,52 +1055,25 @@ class TerminalBench(unittest.TestCase):
         aliases = identity.load_aliases(REPO / "llmratings" / "aliases.json")
         cls.ds = identity.build(aliases, raw)
         by_name = {r["name"]: r for r in ROLES}
-        cls.lines = {name: [ln.rstrip() for ln in render.render(cls.ds, by_name[name])]
-                     for name in ("Researcher", "Coder", "Generic")}
+        cls.results = {name: render.query(cls.ds, by_name[name])
+                       for name in ("Explorer", "Planner", "Coder")}
 
-    def row(self, cat, prefix, model):
-        """First table row in cat whose line matches prefix + contains model —
-        a prefix match skips arrow lines ("    → …") that mention the model."""
-        return next(ln for ln in self.lines[cat]
-                    if re.match(prefix, ln) and model in ln)
+    def test_default_selected_low_rows_have_no_terminal_bench_measurement(self):
+        rows = self.results["Explorer"]["rows"]
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(all(r["effort"] == "low" for r in rows))
+        self.assertTrue(all(r["tb"] is None and r["ratings"]["tb"] is None
+                            for r in rows))
 
-    def test_tb_dash_at_chores_low(self):
-        # Every Chores row sits at low/medium where v2.1 has no submissions
-        # — the TB cell is `—` even for Kimi, whose DSW cell is `—` too.
-        r = run_fixtures()
-        self.assertEqual(r.returncode, 0)
-        lines = [ln.rstrip() for ln in r.stdout.splitlines()]
-        header = next(ln for ln in lines if ln.startswith("DSW"))
-        tb_at = header.index("TB")
-        for model in ("GPT-5.6 Luna", "GPT-5.6 Sol", "GPT-5.5",
-                      "Claude Opus 5", "Kimi K3"):
-            ln = _row_after(lines, model)
-            self.assertEqual(_cell_at(ln, tb_at, 3), "—", model)
-
-    def test_tb_dash_at_generic_low(self):
-        # TB covers high/xhigh/max only — every Generic (ppi → low) row
-        # shows `—`. Data rows start with the right-aligned DSW cell (≤2
-        # spaces, then a digit or —); titles/header/sections/arrows don't
-        # match.
-        rows = [ln for ln in self.lines["Generic"]
-                if re.match(r"^ {0,2}(?:\d|—)", ln)]
-        self.assertTrue(rows)
-        for ln in rows:
-            self.assertRegex(ln, r"^\s*\S+\s+\S+\s+—\s")
-
-    def test_tb_grades_on_researcher(self):
-        # cap rows: Opus/Sol/Luna/Kimi at max, GPT-5.5 at xhigh (no max
-        # variant). Max TB scores: Sol .769, Luna .757, Opus .689 → grades
-        # 5/4/2 over the collapsed set; Kimi has no TB max row → `—`.
-        # GPT-5.5 xhigh has no TB xhigh row → `—`.
-        for model, prefix in [
-            ("Claude Opus 5", r"^\s*5\s+5\s+2\s+"),
-            ("GPT-5.6 Sol", r"^\s*4\s+4\s+5\s+"),
-            ("GPT-5.6 Luna", r"^\s*1\s+2\s+4\s+"),
-            ("Kimi K3", r"^\s*2\s+3\s+—\s+"),
-            ("GPT-5.5", r"^\s*4\s+3\s+—\s+")]:
-            self.assertRegex(self.row("Researcher", prefix, model),
-                             prefix + model)
+    def test_source_grades_stay_in_their_independent_effort_populations(self):
+        rows = {r["model"]: r for r in self.results["Planner"]["rows"]}
+        expected = {"Claude Opus 5": (5, 2), "GPT-5.6 Sol": (4, 5),
+                    "GPT-5.6 Luna": (1, 4), "Kimi K3": (2, None),
+                    "GPT-5.5": (4, None)}
+        self.assertEqual({name: (r["dsw"], r["tb"]) for name, r in rows.items()},
+                         expected)
+        self.assertEqual(rows["GPT-5.6 Luna"]["ratings"]["tb"].score, 0.757)
+        self.assertIsNone(rows["GPT-5.5"]["ratings"]["tb"])
 
     def test_collapse_best_agent(self):
         from llmratings import identity
@@ -775,8 +1082,7 @@ class TerminalBench(unittest.TestCase):
         best = identity.best_tb(self.ds.ratings, "high")
         self.assertEqual(best["gpt-5-5"].score, 0.671)
         self.assertEqual(best["gpt-5-5"].agent, "warp")
-        rows = [ln for ln in self.lines["Generic"]
-                if "GPT-5.5" in ln and ln.startswith("  ")]
+        rows = [r for r in self.results["Explorer"]["rows"] if r["key"] == "gpt-5-5"]
         self.assertEqual(len(rows), 1)
 
     def test_tie_broken_by_recency(self):
@@ -897,8 +1203,8 @@ class LiveAcquisition(unittest.TestCase):
         # page 1 loses its AA row and the parity assertion below fails: the
         # merge is observable from output alone. The request log then pins
         # the rest of the contract (a second page was requested, no third).
-        # The Researcher role (cap lens) renders every model; the default
-        # price lens would drop Kimi (its low grade is 1 — below floor 2).
+        # Researcher is a floor-free Intelligence Best value consumer, so
+        # catalog-only reference rows cannot hide the page-two recommendation.
         dummy = [json.loads(AA_ROW.format(
                      i=f"u{n}", name=f"Model {n}", slug=f"model-{n}",
                      ii=10 + n, cost=0.01 * n, spd=100 + n))
@@ -942,8 +1248,8 @@ class LiveAcquisition(unittest.TestCase):
                          "AA fetcher must stop on the short page")
 
     def test_live_or_context_joins_onto_models(self):
-        # Dataset-level assertion of the live OR join (the rendered context
-        # line is pinned in test_tui): ids resolve through the alias table
+        # Dataset-level assertion of the live OpenRouter join (fixture-loaded
+        # evidence cases are in test_evidence): ids resolve through the alias table
         # ("openai/gpt-5.6-luna") or a vendor-prefix strip ("anthropic/
         # claude-opus-5"); models without an OR row keep context None.
         from llmratings import fetch, identity
@@ -965,11 +1271,8 @@ class LiveAcquisition(unittest.TestCase):
         self.assertIsNone(ds.models["kimi-k3"].context_length,
                           "models without an OR row keep context None")
 
-    def test_unknown_model_absent_from_ranked_tables(self):
-        # A DeepSWE model with no alias entry joins to a source-only identity
-        # (no AA row → no objective-selected configuration): the run
-        # completes and the model is absent from the ranked tables (spec
-        # §3/§4, ticket 18).
+    def test_unknown_model_is_unranked_with_a_source_only_reason(self):
+        # Source-only evidence stays reachable, outside ranked recommendations.
         with tempfile.TemporaryDirectory() as td:
             for f in ("aa.json", "tb.json"):
                 Path(td, f).write_text(Path(FIXTURES, f).read_text())
@@ -979,7 +1282,316 @@ class LiveAcquisition(unittest.TestCase):
             Path(td, "deepswe.json").write_text(json.dumps(ds))
             r = run_cli(self.KEY, "--fixtures", td)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("brand-new-model-9000", r.stdout)
+        self.assertIn("- brand-new-model-9000 [dsw:brand-new-model-9000]: "
+                      "No measured Artificial Analysis configuration", r.stdout)
+        self.assertFalse(any(ln.startswith("  brand-new-model-9000 ")
+                             for ln in r.stdout.splitlines()))
+
+
+class SourceContract(unittest.TestCase):
+    """Real saved-source acquisition and identity consumers (ticket 34)."""
+
+    def docs(self):
+        return {source: json.loads((FIXTURES / name).read_text())
+                for source, name in {**fetch.FILES, "or": "or.json"}.items()}
+
+    def load(self, docs):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        for source, name in {**fetch.FILES, "or": "or.json"}.items():
+            if source in docs:
+                Path(td.name, name).write_text(json.dumps(docs[source]))
+        raw = fetch.fetch_all(td.name)
+        aliases = identity.load_aliases(REPO / "llmratings" / "aliases.json")
+        return identity.build(aliases, raw)
+
+    def test_separate_indexes_cost_timing_and_prices_at_each_effort(self):
+        ds = self.load(self.docs())
+        luna = {r.effort: r for r in ds.ratings
+                if r.source == "aa" and r.model_key == "gpt-5-6-luna"}
+        low, maximum = luna["low"], luna["max"]
+        self.assertEqual((low.score, low.coding_score, low.agentic_score),
+                         (33.3, 44.2, 25.4))
+        self.assertEqual((maximum.score, maximum.coding_score,
+                          maximum.agentic_score), (51.2, 71.4, 45.6))
+        self.assertEqual((low.cost, maximum.cost), (0.0088, 0.0473))
+        self.assertEqual((low.first_answer_seconds, low.first_token_seconds,
+                          low.response_500_tokens_seconds, low.speed),
+                         (1.96, 1.96, 5.36, 146.91))
+        self.assertEqual((maximum.first_answer_seconds, maximum.first_token_seconds,
+                          maximum.response_500_tokens_seconds, maximum.speed),
+                         (139.23, 139.23, 142, 180.51))
+        self.assertEqual(low.pricing, {
+            "price_1m_input_tokens": 0.2, "price_1m_output_tokens": 1.2,
+            "price_1m_cache_hit_tokens": 0.02, "price_1m_cache_write_tokens": 0.25})
+        self.assertNotEqual(low.raw["id"], maximum.raw["id"])
+        self.assertEqual(low.intelligence_index_version, 4.1)
+        self.assertEqual(ds.models["gpt-5-6-luna"].provider, "OpenAI")
+        kimi = next(r for r in ds.ratings if r.source == "aa"
+                    and r.model_key == "kimi-k3" and r.effort == "low")
+        self.assertEqual((kimi.first_token_seconds, kimi.first_answer_seconds,
+                          kimi.response_500_tokens_seconds), (3.45, 60.66, 74.96))
+        self.assertEqual(kimi.raw["artificial_analysis_intelligence_index_cost"]
+                         ["total_cost"], 283.3)
+        self.assertEqual(kimi.cost, 0.2429)
+        self.assertIsNone(kimi.pricing["price_1m_cache_write_tokens"])
+
+
+    def test_optional_metrics_are_independently_unavailable(self):
+        fields = [
+            ("evaluations", "artificial_analysis_intelligence_index", "score", 33.3),
+            ("evaluations", "artificial_analysis_coding_index", "coding_score", 44.2),
+            ("evaluations", "artificial_analysis_agentic_index", "agentic_score", 25.4),
+            ("performance", "median_output_tokens_per_second", "speed", 146.91),
+            ("performance", "median_time_to_first_token_seconds",
+             "first_token_seconds", 1.96),
+            ("performance", "median_time_to_first_answer_token_seconds",
+             "first_answer_seconds", 1.96),
+            ("performance", "median_end_to_end_response_time_seconds",
+             "response_500_tokens_seconds", 5.36),
+        ]
+        for section, key, field, _ in fields:
+            for value in ("missing", None, "not numeric", True, float("nan"),
+                          float("inf"), -float("inf"), 0):
+                with self.subTest(metric=field, value=value):
+                    docs = self.docs()
+                    row = docs["aa"]["data"][0]
+                    if value == "missing":
+                        row[section].pop(key)
+                    else:
+                        row[section][key] = value
+                    ds = self.load(docs)
+                    low = next(r for r in ds.ratings if r.source == "aa"
+                               and r.model_key == "gpt-5-6-luna" and r.effort == "low")
+                    # Only the changed field is unavailable; zero is not missing.
+                    expected = [((0 if value == 0 else None) if attr == field
+                                 else original) for _, _, attr, original in fields]
+                    self.assertEqual([getattr(low, attr) for _, _, attr, _ in fields],
+                                     expected)
+                    self.assertEqual((low.cost, low.model_key, low.effort),
+                                     (0.0088, "gpt-5-6-luna", "low"))
+                    if value != "missing":
+                        self.assertIn(key, low.raw[section])
+
+    def test_null_malformed_and_nonfinite_costs_and_prices(self):
+        for cost in ("missing", None, [], {"cost_per_task": None}, {"cost_per_task": []},
+                     {"cost_per_task": {}}, {"cost_per_task": {"total_cost": "bad"}},
+                     {"cost_per_task": {"total_cost": float("nan")}},
+                     {"cost_per_task": {"total_cost": float("inf")}},
+                     {"cost_per_task": {"total_cost": -float("inf")}},
+                     {"cost_per_task": {"total_cost": True}},
+                     {"cost_per_task": {"total_cost": 0}}):
+            with self.subTest(cost=cost):
+                docs = self.docs()
+                row = docs["aa"]["data"][0]
+                if cost == "missing":
+                    row.pop("artificial_analysis_intelligence_index_cost")
+                else:
+                    row["artificial_analysis_intelligence_index_cost"] = cost
+                row["pricing"] = {"price_1m_input_tokens": float("inf"),
+                                  "price_1m_output_tokens": "bad",
+                                  "price_1m_cache_hit_tokens": 0}
+                ds = self.load(docs)
+                low = next(r for r in ds.ratings if r.source == "aa"
+                           and r.model_key == "gpt-5-6-luna" and r.effort == "low")
+                self.assertEqual(low.cost, 0 if cost == {
+                    "cost_per_task": {"total_cost": 0}} else None)
+                self.assertEqual(low.pricing, {
+                    "price_1m_input_tokens": None, "price_1m_output_tokens": None,
+                    "price_1m_cache_hit_tokens": 0, "price_1m_cache_write_tokens": None})
+                self.assertEqual((low.score, low.coding_score, low.first_answer_seconds),
+                                 (33.3, 44.2, 1.96))
+        for section in ("evaluations", "performance", "pricing"):
+            for malformed in (None, [], "bad", 3):
+                with self.subTest(section=section, malformed=malformed):
+                    docs = self.docs()
+                    docs["aa"]["data"][0][section] = malformed
+                    ds = self.load(docs)
+                    low = next(r for r in ds.ratings if r.source == "aa"
+                               and r.model_key == "gpt-5-6-luna" and r.effort == "low")
+                    self.assertEqual(low.cost, 0.0088)
+                    self.assertEqual(low.raw[section], malformed)
+
+    def test_historical_source_provenance_and_tb_submission_url(self):
+        before = datetime.now(timezone.utc)
+        raw = fetch.fetch_all(FIXTURES)
+        after = datetime.now(timezone.utc)
+        ds = identity.build(identity.load_aliases(REPO / "llmratings" / "aliases.json"),
+                            raw)
+        self.assertEqual(ds.provenance["mode"], "fixture")
+        self.assertLessEqual(before, datetime.fromisoformat(ds.provenance["fetched_at"]))
+        self.assertLessEqual(datetime.fromisoformat(ds.provenance["fetched_at"]), after)
+        aa = ds.provenance["sources"]["aa"]
+        self.assertEqual(aa["snapshot_date"], "2026-08-05")
+        self.assertFalse(aa["synthetic"])
+        self.assertTrue(ds.provenance["sources"]["tb"]["synthetic"])
+        self.assertTrue(ds.provenance["sources"]["or"]["synthetic"])
+        self.assertEqual(ds.provenance["sources"]["deepswe"]["source_dates"]
+                         ["generated_at"], "2026-08-04T01:34:32.908483+00:00")
+        tb = identity.best_tb(ds.ratings, "max")["gpt-5-6-luna"]
+        self.assertEqual(tb.date, "2026-07-11")
+        self.assertEqual(tb.source_url,
+                         "https://raw.githubusercontent.com/harbor-framework/"
+                         "terminal-bench-2-1/main/leaderboard/submissions/"
+                         "20260711-openai-gpt-5-6-luna-max-codex-cli.json")
+        self.assertEqual(tb.raw["metrics"]["accuracy"], 0.757)
+        self.assertEqual(len([r for r in ds.ratings if r.source == "tb"]), 11)
+        self.assertEqual({r.source_url for r in ds.ratings if r.source == "aa"},
+                         {"https://artificialanalysis.ai/api/v2/language/models/free"
+                          "?page_size=200"})
+
+    def test_catalog_permaslug_uses_id_then_alias_and_share_stays_unknown(self):
+        docs = self.docs()
+        docs["or"] = {"data": [
+            {"canonical_slug": "unrelated/published-permaslug-20260805",
+             "id": "openai/gpt-5.6-luna", "context_length": 321000,
+             "architecture": {"input_modalities": ["text", None, 5, "image"],
+                              "output_modalities": ["text"]},
+             "token_share_30d": 0.9},
+            {"id": "anthropic/claude-opus-5", "context_length": 200000},
+        ], "rankings": [{"permaslug": "unrelated/published-permaslug-20260805",
+                         "tokens": 999}], "other": 1}
+        ds = self.load(docs)
+        key = ds.openrouter_models["unrelated/published-permaslug-20260805"]
+        self.assertEqual(key, "gpt-5-6-luna")
+        self.assertEqual(ds.models[key].context_length, 321000)
+        self.assertEqual(ds.models[key].modalities, "in: text, image; out: text")
+        self.assertEqual(ds.models[key].catalog_rows[0]["id"], "openai/gpt-5.6-luna")
+        self.assertEqual(ds.models["claude-opus-5"].context_length, 200000)
+        self.assertIsNone(ds.models[key].token_share_30d)
+        self.assertIsNone(ds.models["kimi-k3"].token_share_30d)
+        self.assertNotIn("anthropic/claude-opus-5", ds.openrouter_models,
+                         "No permaslug is inferred from id")
+        self.assertEqual([(r.score, r.cost) for r in ds.ratings],
+                         [(r.score, r.cost) for r in self.load(self.docs()).ratings])
+
+    def test_malformed_optional_catalog_never_invalidates_ratings(self):
+        baseline = self.load(self.docs())
+        for malformed in (None, [], {"data": None}, {"data": [
+                None, {"id": []}, {"id": "openai/gpt-5.6-luna",
+                                  "canonical_slug": [], "context_length": True,
+                                  "architecture": {"input_modalities": [None, {}],
+                                                   "output_modalities": "text"}}]}):
+            with self.subTest(catalog=malformed):
+                docs = self.docs()
+                docs["or"] = malformed
+                ds = self.load(docs)
+                self.assertEqual([(r.score, r.cost, r.speed) for r in ds.ratings],
+                                 [(r.score, r.cost, r.speed) for r in baseline.ratings])
+                self.assertIsNone(ds.models["gpt-5-6-luna"].context_length)
+                self.assertIsNone(ds.models["gpt-5-6-luna"].modalities)
+
+    def test_source_only_and_aa_only_rows_stay_auditable_not_advice(self):
+        docs = self.docs()
+        docs["aa"]["data"].append(json.loads(AA_ROW.format(
+            i="catalog-only", name="Catalog Only", slug="catalog-only",
+            ii=999, cost=0.0001, spd=9999)))
+        docs["deepswe"]["rows"].append({"model": "source-only",
+                                       "reasoning_effort": "low", "pass_at_1": 0.9})
+        ds = self.load(docs)
+        source = next(r for r in ds.ratings if r.model_key == "dsw:source-only")
+        self.assertEqual((source.score, source.cost, source.raw["model"]),
+                         (0.9, None, "source-only"))
+        self.assertEqual(source.source_url,
+                         "https://deepswe.datacurve.ai/artifacts/v1.1/leaderboard-live.json")
+        result = render.query(ds, ROLES[2], "cap")
+        keys = {r["key"] for r in result["rows"]}
+        self.assertNotIn("catalog-only", keys)
+        self.assertNotIn("dsw:source-only", keys)
+        self.assertIn("dsw:source-only", {r["key"] for r in result["unranked"]})
+        self.assertIn("catalog-only", ds.models)
+        self.assertIn("dsw:source-only", ds.models)
+        self.assertTrue(any(r.raw.get("id") == "catalog-only" for r in ds.ratings))
+
+    def test_named_parse_failures_produce_no_partial_advice(self):
+        for source, label in fetch.SOURCES.items():
+            with self.subTest(source=source):
+                docs = self.docs()
+                docs[source] = {"aa": {"data": [None]},
+                                "deepswe": {"rows": [None]},
+                                "tb": {"submissions": {"bad.json":
+                                       {"source_filter": []}}}}[source]
+                with tempfile.TemporaryDirectory() as td:
+                    for src, name in fetch.FILES.items():
+                        Path(td, name).write_text(json.dumps(docs[src]))
+                    result = run_cli({"LLM_RATINGS_AA_API_KEY": "secret-test-key"},
+                                     "--fixtures", td)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(label, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertNotIn("secret-test-key", result.stderr)
+
+
+    def test_live_page_versions_fetch_date_and_safe_source_urls(self):
+        docs = self.docs()
+        low = next(row for row in docs["aa"]["data"]
+                   if row["slug"] == "gpt-5-6-luna-low")
+        maximum = next(row for row in docs["aa"]["data"]
+                       if row["name"] == "GPT-5.6 Luna (max)")
+        docs["aa"]["data"] = [low] * 200 + [maximum]
+        with tempfile.TemporaryDirectory() as td:
+            for source, name in {**fetch.FILES, "or": "or.json"}.items():
+                Path(td, name).write_text(json.dumps(docs[source]))
+            srv = _LiveServer(td, page_versions={1: 4.1, 2: "v5-test"},
+                              page_dates={1: {"updated_at": "2026-09-01"},
+                                          2: {"updated_at": "2026-09-02"}})
+            self.addCleanup(srv.stop)
+            previous = os.environ.copy()
+            try:
+                os.environ.update(LLM_RATINGS_HTTP_BASE=srv.url(),
+                                  LLM_RATINGS_AA_API_KEY="do-not-persist-secret")
+                raw = fetch.fetch_all(None)
+            finally:
+                os.environ.clear()
+                os.environ.update(previous)
+        ds = identity.build(identity.load_aliases(REPO / "llmratings" / "aliases.json"),
+                            raw)
+        ratings = [r for r in ds.ratings if r.source == "aa"]
+        self.assertEqual(len(ratings), 201)
+        self.assertEqual({r.intelligence_index_version for r in ratings[:-1]}, {4.1})
+        self.assertEqual(ratings[-1].intelligence_index_version, "v5-test")
+        self.assertEqual((ratings[-1].effort, ratings[-1].score, ratings[-1].cost),
+                         ("max", 51.2, 0.0473))
+        self.assertEqual(ratings[0].source_url,
+                         srv.url("/api/v2/language/models/free?page_size=200&page=1"))
+        self.assertEqual(ratings[-1].source_url,
+                         srv.url("/api/v2/language/models/free?page_size=200&page=2"))
+        self.assertEqual(ratings[0].source_dates, {"updated_at": "2026-09-01"})
+        self.assertEqual(ratings[-1].source_dates, {"updated_at": "2026-09-02"})
+        self.assertFalse(ds.provenance["sources"]["aa"].get("source_dates"))
+        self.assertEqual(ds.provenance["mode"], "live")
+        self.assertIsNone(ds.provenance["sources"]["aa"]["snapshot_date"])
+        self.assertEqual(len(ds.provenance["sources"]["aa"]["pages"]), 2)
+        self.assertNotIn("do-not-persist-secret", json.dumps(ds.provenance))
+        self.assertNotIn("x-api-key", json.dumps(ds.provenance))
+        self.assertTrue(all(r.source_url.startswith(srv.url("/sub/"))
+                            for r in ds.ratings if r.source == "tb"))
+        self.assertFalse(any("page=3" in path for path in srv.seen))
+
+    def test_submission_provenance_drops_url_credentials_and_secret_query(self):
+        docs = self.docs()
+        docs["tb"]["listing"][0]["download_url"] = (
+            "https://user:secret-test-key@example.test/submission.json"
+            "?api_key=secret-test-key&token=secret-test-key#secret-test-key")
+        ds = self.load(docs)
+        tb = identity.best_tb(ds.ratings, "max")["gpt-5-6-luna"]
+        self.assertEqual(tb.source_url, "https://example.test/submission.json")
+        self.assertIn("https://example.test/submission.json",
+                      ds.provenance["sources"]["tb"]["urls"])
+        self.assertNotIn("secret-test-key", json.dumps(ds.provenance))
+
+    def test_invalid_catalog_json_is_best_effort(self):
+        with tempfile.TemporaryDirectory() as td:
+            for source, name in fetch.FILES.items():
+                Path(td, name).write_text(json.dumps(self.docs()[source]))
+            Path(td, "or.json").write_text("{")
+            raw = fetch.fetch_all(td)
+            ds = identity.build(
+                identity.load_aliases(REPO / "llmratings" / "aliases.json"), raw)
+        self.assertIsNone(raw["or"])
+        self.assertTrue(render.query(ds, ROLES[2], "cap")["rows"])
+        self.assertIsNone(ds.models["gpt-5-6-luna"].context_length)
 
 
 if __name__ == "__main__":
