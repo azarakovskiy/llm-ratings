@@ -1,8 +1,13 @@
-# Fixtures — main (tickets 11–18)
+# Fixtures — main and runtime source contract (tickets 11–18, 34)
 
 Saved copies of the real source payloads, curated to a small subset, served
 by the CLI's `--fixtures` mode (the spec's user-confirmed test seam: no
 network below the fetch boundary).
+
+These are historical test payloads, not current market measurements. The
+recorded snapshot date and Intelligence Index version describe the saved
+evidence only. The model set includes fictional names, and the Terminal-Bench
+and OpenRouter rows are synthetic; missing creators are not coverage claims.
 
 ## Provenance
 
@@ -32,6 +37,11 @@ Fetched live 2026-08-05:
 
 Rows are verbatim from the payloads (TB: synthesized); only the row selection
 is curated.
+
+`provenance.json` records the historical snapshot dates from this README for
+DeepSWE/Artificial Analysis and marks Terminal-Bench/OpenRouter as synthetic.
+Their synthetic snapshot dates are unknown. A run's actual UTC fetch timestamp
+is separate: reading these files today does not make their measurements current.
 
 ## Model set (7)
 
@@ -96,3 +106,75 @@ Notes:
   Chores/Everyday is the honest absence of data, not a dropped row.
 - Kimi K3, Terra and Qwen3.8 Max have no TB rows: Kimi/Terra show `—` in the
   TB column at every effort; nothing-discarded is asserted on the 11 rows.
+
+## Runtime normalized source contract
+
+`fetch.fetch_all(directory)` reads the saved responses without network;
+`fetch.fetch_all(None)` uses the existing live endpoints. Both return the
+source payloads plus `_provenance`. `identity.build(aliases, raw)` carries that
+record into `Dataset.provenance` and preserves each original row in
+`Rating.raw`. No second acquisition path or production snapshot is introduced.
+
+For Artificial Analysis, each measured effort has these independent nullable
+fields. Published paths below are relative to `data[]`:
+
+| Rating field | Published path and basis |
+|---|---|
+| `score` | `evaluations.artificial_analysis_intelligence_index` — Intelligence only |
+| `coding_score` | `evaluations.artificial_analysis_coding_index` |
+| `agentic_score` | `evaluations.artificial_analysis_agentic_index` |
+| `cost` | `artificial_analysis_intelligence_index_cost.cost_per_task.total_cost` — matching Intelligence benchmark USD/task |
+| `first_answer_seconds` | `performance.median_time_to_first_answer_token_seconds` — includes thinking |
+| `speed` | `performance.median_output_tokens_per_second` — output throughput |
+| `first_token_seconds` | `performance.median_time_to_first_token_seconds` — may stop at a reasoning token |
+| `response_500_tokens_seconds` | `performance.median_end_to_end_response_time_seconds` — published synthetic estimate for 500 answer tokens |
+| `pricing` | `pricing.price_1m_input_tokens`, `price_1m_output_tokens`, `price_1m_cache_hit_tokens`, `price_1m_cache_write_tokens` — separate USD per million tokens |
+
+An absent, null, nonnumeric or non-finite optional number becomes `None`;
+zero remains zero. A malformed optional object leaves its metrics unavailable
+without dropping the configuration or its raw row. No timing, score or cost is
+copied from another effort. The outer Intelligence suite `total_cost`, token
+list prices, and DeepSWE/Terminal-Bench run expenditures are different bases.
+There is no established matching Coding/Agentic task cost. The separate Coding
+Agent Index is not a substitute for these scores, and the complete current
+Coding/Agentic formulas remain a source gap.
+
+`Dataset.provenance` exposes `mode` (`fixture` or `live`), actual UTC
+`fetched_at`, and per-source `urls`, `snapshot_date`, `synthetic`, and labelled
+`source_dates` when published. Unknown history stays null/empty. Live
+Artificial Analysis pagination also retains page URLs, row ranges, reported
+index versions and dates; each rating gets its page's
+`intelligence_index_version` and `source_url`. Terminal-Bench ratings retain
+individual listing `download_url` values in `source_url`, plus submission
+`date`, agent and wholesale raw evidence. Source URLs omit credentials,
+headers, fragments and non-pagination query parameters.
+
+The canonical model key is still the Artificial Analysis base slug; UUIDs
+remain per-effort evidence. Existing aliases and Terminal-Bench best-agent,
+then recency collapse are unchanged. Source-only models remain auditable in
+the dataset with no manufactured Artificial Analysis values. Artificial
+Analysis-only catalog models do not enter ranked/advisory inclusion. This
+source slice does not change objective selection, ties, grades or frontiers.
+
+OpenRouter catalog enrichment remains best effort. Context and input/output
+modalities are optional; malformed or missing catalog data does not fail
+ratings. Original joined rows remain in `Model.catalog_rows`.
+`Dataset.openrouter_models` maps a supplied catalog `canonical_slug` (the
+rankings permaslug) through that row's `id`, then the existing ID/alias join,
+to the canonical model key. A permaslug is never derived from an `id`.
+Existing ID-only and vendor-prefix joins still work.
+
+`Model.token_share_30d` remains explicitly `None`, not zero. No authenticated
+rankings payload, complete 30-day coverage or top-50 presence has been verified
+by the recorded evidence. Catalog fields or illustrative totals do not prove
+share; top-50 absence is not zero usage. A future positive display value needs
+verified window/coverage, source/date, a denominator including `other`, and
+one canonical-model aggregation across variants, dated snapshots and days
+without double-counting or effort splits. This is an evidence/access limit,
+not a claim that the intended feed is impossible. Share cannot affect policy.
+
+Timing is explanatory, not whole-agent task duration or evidence about a
+creator's particular serving endpoint. The Free route's exact prompt preset
+and provider aggregation remain unestablished. This implementation and its
+offline checks do not claim a newly inspected authenticated live response.
+

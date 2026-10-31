@@ -71,6 +71,7 @@ Tickets 01–18 below record the historical terminal product and its implementat
 - [Choose AA signals and objectives for the agreed roles](issues/30-role-advice-criteria.md): eight role-specific selection profiles and latency policies agreed, with matched-cost limits and full web labels.
 - [Redesign the provider-selection prototype for readable model advice](issues/33-redesign-provider-selection-prototype.md): Provider lens approved; creator-first navigation, aligned comparisons and on-demand inline evidence define the web visual direction.
 - [Amend the spec and write role-advice build tickets](issues/31-amend-spec-and-build-tickets.md#answer): planning destination reached; the amended web spec and five dependency-wired build tickets encode the resolved roles, criteria, provider workflow and approved visual direction.
+- [Preserve index-specific metrics and source provenance](issues/34-preserve-index-metrics-provenance.md#answer): real fetch/identity consumers retain separate effort-specific indexes, matching Intelligence task cost, distinct timing/list prices and auditable live/fixture/date/version/submission provenance; catalog permaslug→ID→alias joins work, unverified share remains unavailable, and recommendation policy is unchanged. Verified by 34 affected tests, 87 full-suite tests, lint and separate fixture-consumer/batch smokes.
 
 ## Not yet specified
 

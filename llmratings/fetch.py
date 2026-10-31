@@ -1,6 +1,7 @@
-"""Acquisition seam. The contract below is the seam: fetch_all returns
-{source: raw payload dict}, and anything below that (identity join, tiering,
-ranking, rendering) never touches the network or the fixture files.
+"""Acquisition seam. fetch_all returns {source: raw payload} plus
+`_provenance`: acquisition mode, actual UTC fetch time, source URLs, available
+source dates and fixture snapshot/synthetic evidence. Original rows stay intact.
+Nothing below this boundary touches the network or fixture files.
 
 Ticket 11: fixture backend — saved source payloads served instead of HTTP.
 Ticket 15: fetch_all(None) replaces that with live HTTP for all three sources
@@ -12,13 +13,19 @@ and the run proceeds. Fixture mode is unchanged and stays the offline test
 seam; live mode is exercised offline against a local origin via the
 LLM_RATINGS_HTTP_BASE override (test seam only — it swaps the origin of every
 live URL).
+
+Fixture metadata comes from optional provenance.json, not file modification
+times. A fixture read today is not a new measurement. Source URLs exclude
+credentials, headers and non-pagination query parameters.
 """
 
 import json
 import os
 import re
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # Display names for error messages — "naming the source" per the failure contract.
 SOURCES = {"deepswe": "DeepSWE", "aa": "Artificial Analysis",
@@ -51,6 +58,34 @@ class SourceError(Exception):
         super().__init__(f"{SOURCES[source]}: {detail}")
 
 
+def source_url(value):
+    """An auditable HTTP URL without user info, secrets or request headers."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            return None
+        query = urlencode([(key, val) for key, val in parse_qsl(parts.query)
+                           if key in ("page", "page_size")])
+        return urlunsplit((parts.scheme, parts.netloc.rsplit("@", 1)[-1],
+                           parts.path, query, ""))
+    except ValueError:
+        return None
+
+
+def _source_dates(doc):
+    """Keep published date labels; none is relabelled as a measurement date."""
+    if not isinstance(doc, dict):
+        return {}
+    dates = {key: doc[key] for key in ("generated_at", "updated_at", "date", "snapshot_date")
+             if isinstance(doc.get(key), str)}
+    job = doc.get("latest_job")
+    if isinstance(job, dict) and isinstance(job.get("finished_at"), str):
+        dates["latest_job.finished_at"] = job["finished_at"]
+    return dates
+
+
 def _get_json(url, headers=None):
     """GET url and parse JSON. OSError/ValueError propagate to the caller."""
     h = {"User-Agent": "llm-ratings/0.1.0"}
@@ -65,28 +100,35 @@ def _get(source, url, headers=None):
     try:
         return _get_json(url, headers)
     except (OSError, ValueError) as e:
-        raise SourceError(source, f"GET {url} failed: {e}") from e
+        raise SourceError(source, f"GET {source_url(url)} failed: {e}") from e
 
 
 def _live_deepswe(base):
     return _get("deepswe", base + _DEEPSWE)
 
 
-def _live_aa(base, api_key):
+def _live_aa(base, api_key, provenance):
     """Paginated free-tier API (page_size capped at 200): fetch pages until
     one returns fewer than page_size rows (~3 pages at the current model
     count), then merge into one payload with every page's rows."""
     url = f"{base}{_AA}"
     rows, page = [], 1
+    provenance["urls"] = []
+    provenance["pages"] = []
     while True:
-        doc = _get("aa", f"{url}?page_size={_AA_PAGE_SIZE}&page={page}",
-                   {"x-api-key": api_key})
+        page_url = f"{url}?page_size={_AA_PAGE_SIZE}&page={page}"
+        doc = _get("aa", page_url, {"x-api-key": api_key})
         if not isinstance(doc, dict):
             raise SourceError("aa",
                               f"GET {url} page {page} returned a non-object payload")
         batch = doc.get("data")
         if not isinstance(batch, list):
             raise SourceError("aa", f"GET {url} page {page} has no data list")
+        provenance["urls"].append(source_url(page_url))
+        provenance["pages"].append({
+            "url": source_url(page_url), "start": len(rows), "stop": len(rows) + len(batch),
+            "intelligence_index_version": doc.get("intelligence_index_version"),
+            "source_dates": _source_dates(doc)})
         rows += batch
         if len(batch) < _AA_PAGE_SIZE:
             break
@@ -109,10 +151,12 @@ def _live_tb(base):
         if not isinstance(entry, dict):
             raise SourceError("tb", f"listing entry is not an object: {entry!r}")
         name = entry.get("name")
-        if not _TB_FILE.match(name or ""):
+        if not isinstance(name, str):
+            raise SourceError("tb", "listing entry has no string name")
+        if not _TB_FILE.match(name):
             continue
         raw_url = entry.get("download_url")
-        if not raw_url:
+        if not isinstance(raw_url, str) or not source_url(raw_url):
             raise SourceError("tb", f"listing entry has no download_url: {name!r}")
         submissions[name] = _get("tb", raw_url)
     return {"listing": listing, "submissions": submissions}
@@ -141,49 +185,72 @@ def _live_or(base):
         return None
 
 
-def _fetch_live():
-    """Fetch every source over HTTP. Any single rating-source failure
-    raises a SourceError naming it before any output — no silent partial
-    tables. OpenRouter enrichment is best-effort and exempt."""
+def _fetch_live(provenance):
+    """Fetch all ratings or fail before advice. Catalog enrichment is optional."""
     api_key = os.environ.get("LLM_RATINGS_AA_API_KEY", "")
     if not api_key:
-        # The CLI checks this before fetching (the ticket-11 setup error);
-        # the guard keeps the seam honest for direct fetch_all(None) callers.
+        # Keep the seam honest for direct fetch_all(None) consumers too.
         raise SourceError("aa", "LLM_RATINGS_AA_API_KEY is not set")
     return {"deepswe": _live_deepswe(_origin("deepswe")),
-            "aa": _live_aa(_origin("aa"), api_key),
+            "aa": _live_aa(_origin("aa"), api_key, provenance["aa"]),
             "tb": _live_tb(_origin("tb")),
             "or": _live_or(_origin("or"))}
 
 
 def fetch_all(fixtures_dir):
-    """Acquire every source's payload.
+    """Acquire raw sources and `_provenance` through the sole live/fixture seam.
 
-    fixtures_dir=None → live HTTP (ticket 15); otherwise serve the saved
-    payloads from fixtures_dir (the test seam — no network). Either way the
-    return is {source: dict}, the raw JSON payloads verbatim, plus "or"
-    (OpenRouter) which is best-effort: None when unavailable. Any failed
-    live fetch or missing/unreadable rating-source fixture raises a
-    SourceError naming the source: no silent partial tables.
+    Missing/unreadable rating sources fail by name; OpenRouter is best effort.
+    A fixture's optional provenance.json supplies historical snapshot dates and
+    synthetic flags. Unknown dates stay unknown, never inferred from run time.
     """
+    mode = "fixture" if fixtures_dir is not None else "live"
+    origins = _ORIGINS if fixtures_dir is not None else {
+        source: _origin(source) for source in (*FILES, "or")}
+    paths = {"deepswe": _DEEPSWE, "aa": f"{_AA}?page_size={_AA_PAGE_SIZE}",
+             "tb": _TB_LISTING, "or": _OR}
+    sources = {source: {"urls": [source_url(origins[source] + path)],
+                        "snapshot_date": None, "synthetic": None}
+               for source, path in paths.items()}
+    provenance = {"mode": mode, "fetched_at": datetime.now(timezone.utc).isoformat(),
+                  "sources": sources}
     if fixtures_dir is None:
-        return _fetch_live()
-    d = Path(fixtures_dir)
-    out = {}
-    for source, fname in FILES.items():
-        p = d / fname
-        if not p.is_file():
-            raise SourceError(source, f"fixture file not found: {p}")
-        try:
-            out[source] = json.loads(p.read_text())
-        except (OSError, json.JSONDecodeError) as e:
-            raise SourceError(source, f"cannot read fixture {p}: {e}")
-    # OpenRouter is enrichment only: a missing or unreadable fixture file is
-    # skipped (best-effort), never a source failure.
-    p = d / "or.json"
-    if p.is_file():
-        try:
-            out["or"] = json.loads(p.read_text())
-        except (OSError, json.JSONDecodeError):
-            out["or"] = None
+        out = _fetch_live(sources)
+    else:
+        d = Path(fixtures_dir)
+        out = {}
+        for source, fname in FILES.items():
+            p = d / fname
+            if not p.is_file():
+                raise SourceError(source, f"fixture file not found: {p}")
+            try:
+                out[source] = json.loads(p.read_text())
+            except (OSError, ValueError) as e:
+                raise SourceError(source, f"cannot read fixture {p}: {e}") from e
+        # Catalog and fixture history are optional, not rating-source failures.
+        out["or"] = None
+        for filename in ("or.json", "provenance.json"):
+            try:
+                doc = json.loads((d / filename).read_text())
+            except (OSError, ValueError):
+                continue
+            if filename == "or.json":
+                out["or"] = doc
+            elif isinstance(doc, dict) and isinstance(doc.get("sources"), dict):
+                for source, evidence in doc["sources"].items():
+                    if source not in sources or not isinstance(evidence, dict):
+                        continue
+                    if isinstance(evidence.get("snapshot_date"), str):
+                        sources[source]["snapshot_date"] = evidence["snapshot_date"]
+                    if isinstance(evidence.get("synthetic"), bool):
+                        sources[source]["synthetic"] = evidence["synthetic"]
+    for source in sources:
+        sources[source]["source_dates"] = _source_dates(out.get(source))
+    tb = out.get("tb")
+    listing = tb.get("listing") if isinstance(tb, dict) else None
+    for entry in listing if isinstance(listing, list) else []:
+        url = source_url(entry.get("download_url")) if isinstance(entry, dict) else None
+        if url and url not in sources["tb"]["urls"]:
+            sources["tb"]["urls"].append(url)
+    out["_provenance"] = provenance
     return out

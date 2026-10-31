@@ -394,7 +394,7 @@ def detail(ds, row, role, objective=None):
     tier = row["price_tier"]
     tier_txt = "—" if tier is None else tier
     if aa is not None:
-        pr = aa.raw.get("pricing") or {}
+        pr = aa.pricing
         inp, outp = pr.get("price_1m_input_tokens"), pr.get("price_1m_output_tokens")
         if inp is not None and outp is not None:
             out.append(f"list price  ${inp:.2f}/${outp:.2f} per M in/out "

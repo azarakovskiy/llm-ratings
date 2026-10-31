@@ -14,6 +14,7 @@ model's effort, the price-lens floor drops below-floor models, OpenRouter
 enrichment is best-effort (live 500 degrades to a full table)."""
 
 import json
+from datetime import datetime, timezone
 import os
 import re
 import subprocess
@@ -29,7 +30,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))  # in-process `import llmratings` for render tests
 FIXTURES = REPO / ".scratch" / "llm-ratings" / "fixtures" / "main"
 
-from llmratings import render  # noqa: E402  (sys.path setup above)
+from llmratings import fetch, identity, render  # noqa: E402  (sys.path setup above)
 ROLES = render.load_roles(REPO / "llmratings" / "roles.json")
 
 
@@ -86,9 +87,10 @@ class _LiveServer:
 
     PAGE_SIZE = 200
 
-    def __init__(self, fixtures_dir=FIXTURES, fail=None):
+    def __init__(self, fixtures_dir=FIXTURES, fail=None, page_versions=None):
         self.dir = Path(fixtures_dir)
         self.fail = fail
+        self.page_versions = page_versions or {}
         self.seen = []
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _live_handler(self))
         self.port = self.httpd.server_address[1]
@@ -126,6 +128,8 @@ class _LiveServer:
             aa = json.loads((self.dir / "aa.json").read_text())
             page = int(parse_qs(urlsplit(path).query).get("page", ["1"])[0])
             batch = aa["data"][(page - 1) * self.PAGE_SIZE: page * self.PAGE_SIZE]
+            if page in self.page_versions:
+                aa["intelligence_index_version"] = self.page_versions[page]
             return json.dumps(dict(aa, data=batch)).encode()
         if path.startswith("/api/v1/models"):
             p = self.dir / "or.json"
@@ -980,6 +984,305 @@ class LiveAcquisition(unittest.TestCase):
             r = run_cli(self.KEY, "--fixtures", td)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("brand-new-model-9000", r.stdout)
+
+
+class SourceContract(unittest.TestCase):
+    """Real saved-source acquisition and identity consumers (ticket 34)."""
+
+    def docs(self):
+        return {source: json.loads((FIXTURES / name).read_text())
+                for source, name in {**fetch.FILES, "or": "or.json"}.items()}
+
+    def load(self, docs):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        for source, name in {**fetch.FILES, "or": "or.json"}.items():
+            if source in docs:
+                Path(td.name, name).write_text(json.dumps(docs[source]))
+        raw = fetch.fetch_all(td.name)
+        aliases = identity.load_aliases(REPO / "llmratings" / "aliases.json")
+        return identity.build(aliases, raw)
+
+    def test_separate_indexes_cost_timing_and_prices_at_each_effort(self):
+        ds = self.load(self.docs())
+        luna = {r.effort: r for r in ds.ratings
+                if r.source == "aa" and r.model_key == "gpt-5-6-luna"}
+        low, maximum = luna["low"], luna["max"]
+        self.assertEqual((low.score, low.coding_score, low.agentic_score),
+                         (33.3, 44.2, 25.4))
+        self.assertEqual((maximum.score, maximum.coding_score,
+                          maximum.agentic_score), (51.2, 71.4, 45.6))
+        self.assertEqual((low.cost, maximum.cost), (0.0088, 0.0473))
+        self.assertEqual((low.first_answer_seconds, low.first_token_seconds,
+                          low.response_500_tokens_seconds, low.speed),
+                         (1.96, 1.96, 5.36, 146.91))
+        self.assertEqual((maximum.first_answer_seconds, maximum.first_token_seconds,
+                          maximum.response_500_tokens_seconds, maximum.speed),
+                         (139.23, 139.23, 142, 180.51))
+        self.assertEqual(low.pricing, {
+            "price_1m_input_tokens": 0.2, "price_1m_output_tokens": 1.2,
+            "price_1m_cache_hit_tokens": 0.02, "price_1m_cache_write_tokens": 0.25})
+        self.assertNotEqual(low.raw["id"], maximum.raw["id"])
+        self.assertEqual(low.intelligence_index_version, 4.1)
+        self.assertEqual(ds.models["gpt-5-6-luna"].provider, "OpenAI")
+        kimi = next(r for r in ds.ratings if r.source == "aa"
+                    and r.model_key == "kimi-k3" and r.effort == "low")
+        self.assertEqual((kimi.first_token_seconds, kimi.first_answer_seconds,
+                          kimi.response_500_tokens_seconds), (3.45, 60.66, 74.96))
+        self.assertEqual(kimi.raw["artificial_analysis_intelligence_index_cost"]
+                         ["total_cost"], 283.3)
+        self.assertEqual(kimi.cost, 0.2429)
+        self.assertIsNone(kimi.pricing["price_1m_cache_write_tokens"])
+
+
+    def test_optional_metrics_are_independently_unavailable(self):
+        fields = [
+            ("evaluations", "artificial_analysis_intelligence_index", "score", 33.3),
+            ("evaluations", "artificial_analysis_coding_index", "coding_score", 44.2),
+            ("evaluations", "artificial_analysis_agentic_index", "agentic_score", 25.4),
+            ("performance", "median_output_tokens_per_second", "speed", 146.91),
+            ("performance", "median_time_to_first_token_seconds",
+             "first_token_seconds", 1.96),
+            ("performance", "median_time_to_first_answer_token_seconds",
+             "first_answer_seconds", 1.96),
+            ("performance", "median_end_to_end_response_time_seconds",
+             "response_500_tokens_seconds", 5.36),
+        ]
+        for section, key, field, _ in fields:
+            for value in ("missing", None, "not numeric", True, float("nan"),
+                          float("inf"), -float("inf"), 0):
+                with self.subTest(metric=field, value=value):
+                    docs = self.docs()
+                    row = docs["aa"]["data"][0]
+                    if value == "missing":
+                        row[section].pop(key)
+                    else:
+                        row[section][key] = value
+                    ds = self.load(docs)
+                    low = next(r for r in ds.ratings if r.source == "aa"
+                               and r.model_key == "gpt-5-6-luna" and r.effort == "low")
+                    # Only the changed field is unavailable; zero is not missing.
+                    expected = [((0 if value == 0 else None) if attr == field
+                                 else original) for _, _, attr, original in fields]
+                    self.assertEqual([getattr(low, attr) for _, _, attr, _ in fields],
+                                     expected)
+                    self.assertEqual((low.cost, low.model_key, low.effort),
+                                     (0.0088, "gpt-5-6-luna", "low"))
+                    if value != "missing":
+                        self.assertIn(key, low.raw[section])
+
+    def test_null_malformed_and_nonfinite_costs_and_prices(self):
+        for cost in ("missing", None, [], {"cost_per_task": None}, {"cost_per_task": []},
+                     {"cost_per_task": {}}, {"cost_per_task": {"total_cost": "bad"}},
+                     {"cost_per_task": {"total_cost": float("nan")}},
+                     {"cost_per_task": {"total_cost": float("inf")}},
+                     {"cost_per_task": {"total_cost": -float("inf")}},
+                     {"cost_per_task": {"total_cost": True}},
+                     {"cost_per_task": {"total_cost": 0}}):
+            with self.subTest(cost=cost):
+                docs = self.docs()
+                row = docs["aa"]["data"][0]
+                if cost == "missing":
+                    row.pop("artificial_analysis_intelligence_index_cost")
+                else:
+                    row["artificial_analysis_intelligence_index_cost"] = cost
+                row["pricing"] = {"price_1m_input_tokens": float("inf"),
+                                  "price_1m_output_tokens": "bad",
+                                  "price_1m_cache_hit_tokens": 0}
+                ds = self.load(docs)
+                low = next(r for r in ds.ratings if r.source == "aa"
+                           and r.model_key == "gpt-5-6-luna" and r.effort == "low")
+                self.assertEqual(low.cost, 0 if cost == {
+                    "cost_per_task": {"total_cost": 0}} else None)
+                self.assertEqual(low.pricing, {
+                    "price_1m_input_tokens": None, "price_1m_output_tokens": None,
+                    "price_1m_cache_hit_tokens": 0, "price_1m_cache_write_tokens": None})
+                self.assertEqual((low.score, low.coding_score, low.first_answer_seconds),
+                                 (33.3, 44.2, 1.96))
+        for section in ("evaluations", "performance", "pricing"):
+            for malformed in (None, [], "bad", 3):
+                with self.subTest(section=section, malformed=malformed):
+                    docs = self.docs()
+                    docs["aa"]["data"][0][section] = malformed
+                    ds = self.load(docs)
+                    low = next(r for r in ds.ratings if r.source == "aa"
+                               and r.model_key == "gpt-5-6-luna" and r.effort == "low")
+                    self.assertEqual(low.cost, 0.0088)
+                    self.assertEqual(low.raw[section], malformed)
+
+    def test_historical_source_provenance_and_tb_submission_url(self):
+        before = datetime.now(timezone.utc)
+        raw = fetch.fetch_all(FIXTURES)
+        after = datetime.now(timezone.utc)
+        ds = identity.build(identity.load_aliases(REPO / "llmratings" / "aliases.json"),
+                            raw)
+        self.assertEqual(ds.provenance["mode"], "fixture")
+        self.assertLessEqual(before, datetime.fromisoformat(ds.provenance["fetched_at"]))
+        self.assertLessEqual(datetime.fromisoformat(ds.provenance["fetched_at"]), after)
+        aa = ds.provenance["sources"]["aa"]
+        self.assertEqual(aa["snapshot_date"], "2026-08-05")
+        self.assertFalse(aa["synthetic"])
+        self.assertTrue(ds.provenance["sources"]["tb"]["synthetic"])
+        self.assertTrue(ds.provenance["sources"]["or"]["synthetic"])
+        self.assertEqual(ds.provenance["sources"]["deepswe"]["source_dates"]
+                         ["generated_at"], "2026-08-04T01:34:32.908483+00:00")
+        tb = identity.best_tb(ds.ratings, "max")["gpt-5-6-luna"]
+        self.assertEqual(tb.date, "2026-07-11")
+        self.assertEqual(tb.source_url,
+                         "https://raw.githubusercontent.com/harbor-framework/"
+                         "terminal-bench-2-1/main/leaderboard/submissions/"
+                         "20260711-openai-gpt-5-6-luna-max-codex-cli.json")
+        self.assertEqual(tb.raw["metrics"]["accuracy"], 0.757)
+        self.assertEqual(len([r for r in ds.ratings if r.source == "tb"]), 11)
+        self.assertEqual({r.source_url for r in ds.ratings if r.source == "aa"},
+                         {"https://artificialanalysis.ai/api/v2/language/models/free"
+                          "?page_size=200"})
+
+    def test_catalog_permaslug_uses_id_then_alias_and_share_stays_unknown(self):
+        docs = self.docs()
+        docs["or"] = {"data": [
+            {"canonical_slug": "unrelated/published-permaslug-20260805",
+             "id": "openai/gpt-5.6-luna", "context_length": 321000,
+             "architecture": {"input_modalities": ["text", None, 5, "image"],
+                              "output_modalities": ["text"]},
+             "token_share_30d": 0.9},
+            {"id": "anthropic/claude-opus-5", "context_length": 200000},
+        ], "rankings": [{"permaslug": "unrelated/published-permaslug-20260805",
+                         "tokens": 999}], "other": 1}
+        ds = self.load(docs)
+        key = ds.openrouter_models["unrelated/published-permaslug-20260805"]
+        self.assertEqual(key, "gpt-5-6-luna")
+        self.assertEqual(ds.models[key].context_length, 321000)
+        self.assertEqual(ds.models[key].modalities, "in: text, image; out: text")
+        self.assertEqual(ds.models[key].catalog_rows[0]["id"], "openai/gpt-5.6-luna")
+        self.assertEqual(ds.models["claude-opus-5"].context_length, 200000)
+        self.assertIsNone(ds.models[key].token_share_30d)
+        self.assertIsNone(ds.models["kimi-k3"].token_share_30d)
+        self.assertNotIn("anthropic/claude-opus-5", ds.openrouter_models,
+                         "No permaslug is inferred from id")
+        self.assertEqual([(r.score, r.cost) for r in ds.ratings],
+                         [(r.score, r.cost) for r in self.load(self.docs()).ratings])
+
+    def test_malformed_optional_catalog_never_invalidates_ratings(self):
+        baseline = self.load(self.docs())
+        for malformed in (None, [], {"data": None}, {"data": [
+                None, {"id": []}, {"id": "openai/gpt-5.6-luna",
+                                  "canonical_slug": [], "context_length": True,
+                                  "architecture": {"input_modalities": [None, {}],
+                                                   "output_modalities": "text"}}]}):
+            with self.subTest(catalog=malformed):
+                docs = self.docs()
+                docs["or"] = malformed
+                ds = self.load(docs)
+                self.assertEqual([(r.score, r.cost, r.speed) for r in ds.ratings],
+                                 [(r.score, r.cost, r.speed) for r in baseline.ratings])
+                self.assertIsNone(ds.models["gpt-5-6-luna"].context_length)
+                self.assertIsNone(ds.models["gpt-5-6-luna"].modalities)
+
+    def test_source_only_and_aa_only_rows_stay_auditable_not_advice(self):
+        docs = self.docs()
+        docs["aa"]["data"].append(json.loads(AA_ROW.format(
+            i="catalog-only", name="Catalog Only", slug="catalog-only",
+            ii=999, cost=0.0001, spd=9999)))
+        docs["deepswe"]["rows"].append({"model": "source-only",
+                                       "reasoning_effort": "low", "pass_at_1": 0.9})
+        ds = self.load(docs)
+        source = next(r for r in ds.ratings if r.model_key == "dsw:source-only")
+        self.assertEqual((source.score, source.cost, source.raw["model"]),
+                         (0.9, None, "source-only"))
+        self.assertEqual(source.source_url,
+                         "https://deepswe.datacurve.ai/artifacts/v1.1/leaderboard-live.json")
+        keys = {r["key"] for r in render.objective_rows(ds, ROLES[2], "cap")}
+        self.assertNotIn("catalog-only", keys)
+        self.assertNotIn("dsw:source-only", keys)
+        self.assertIn("catalog-only", ds.models)
+        self.assertIn("dsw:source-only", ds.models)
+        self.assertTrue(any(r.raw.get("id") == "catalog-only" for r in ds.ratings))
+
+    def test_named_parse_failures_produce_no_partial_advice(self):
+        for source, label in fetch.SOURCES.items():
+            with self.subTest(source=source):
+                docs = self.docs()
+                docs[source] = {"aa": {"data": [None]},
+                                "deepswe": {"rows": [None]},
+                                "tb": {"submissions": {"bad.json":
+                                       {"source_filter": []}}}}[source]
+                with tempfile.TemporaryDirectory() as td:
+                    for src, name in fetch.FILES.items():
+                        Path(td, name).write_text(json.dumps(docs[src]))
+                    result = run_cli({"LLM_RATINGS_AA_API_KEY": "secret-test-key"},
+                                     "--fixtures", td)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(label, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertNotIn("secret-test-key", result.stderr)
+
+
+    def test_live_page_versions_fetch_date_and_safe_source_urls(self):
+        docs = self.docs()
+        low = next(row for row in docs["aa"]["data"]
+                   if row["slug"] == "gpt-5-6-luna-low")
+        maximum = next(row for row in docs["aa"]["data"]
+                       if row["name"] == "GPT-5.6 Luna (max)")
+        docs["aa"]["data"] = [low] * 200 + [maximum]
+        with tempfile.TemporaryDirectory() as td:
+            for source, name in {**fetch.FILES, "or": "or.json"}.items():
+                Path(td, name).write_text(json.dumps(docs[source]))
+            srv = _LiveServer(td, page_versions={1: 4.1, 2: "v5-test"})
+            self.addCleanup(srv.stop)
+            previous = os.environ.copy()
+            try:
+                os.environ.update(LLM_RATINGS_HTTP_BASE=srv.url(),
+                                  LLM_RATINGS_AA_API_KEY="do-not-persist-secret")
+                raw = fetch.fetch_all(None)
+            finally:
+                os.environ.clear()
+                os.environ.update(previous)
+        ds = identity.build(identity.load_aliases(REPO / "llmratings" / "aliases.json"),
+                            raw)
+        ratings = [r for r in ds.ratings if r.source == "aa"]
+        self.assertEqual(len(ratings), 201)
+        self.assertEqual({r.intelligence_index_version for r in ratings[:-1]}, {4.1})
+        self.assertEqual(ratings[-1].intelligence_index_version, "v5-test")
+        self.assertEqual((ratings[-1].effort, ratings[-1].score, ratings[-1].cost),
+                         ("max", 51.2, 0.0473))
+        self.assertEqual(ratings[0].source_url,
+                         srv.url("/api/v2/language/models/free?page_size=200&page=1"))
+        self.assertEqual(ratings[-1].source_url,
+                         srv.url("/api/v2/language/models/free?page_size=200&page=2"))
+        self.assertEqual(ds.provenance["mode"], "live")
+        self.assertIsNone(ds.provenance["sources"]["aa"]["snapshot_date"])
+        self.assertEqual(len(ds.provenance["sources"]["aa"]["pages"]), 2)
+        self.assertNotIn("do-not-persist-secret", json.dumps(ds.provenance))
+        self.assertNotIn("x-api-key", json.dumps(ds.provenance))
+        self.assertTrue(all(r.source_url.startswith(srv.url("/sub/"))
+                            for r in ds.ratings if r.source == "tb"))
+        self.assertFalse(any("page=3" in path for path in srv.seen))
+
+    def test_submission_provenance_drops_url_credentials_and_secret_query(self):
+        docs = self.docs()
+        docs["tb"]["listing"][0]["download_url"] = (
+            "https://user:secret-test-key@example.test/submission.json"
+            "?api_key=secret-test-key&token=secret-test-key#secret-test-key")
+        ds = self.load(docs)
+        tb = identity.best_tb(ds.ratings, "max")["gpt-5-6-luna"]
+        self.assertEqual(tb.source_url, "https://example.test/submission.json")
+        self.assertIn("https://example.test/submission.json",
+                      ds.provenance["sources"]["tb"]["urls"])
+        self.assertNotIn("secret-test-key", json.dumps(ds.provenance))
+
+    def test_invalid_catalog_json_is_best_effort(self):
+        with tempfile.TemporaryDirectory() as td:
+            for source, name in fetch.FILES.items():
+                Path(td, name).write_text(json.dumps(self.docs()[source]))
+            Path(td, "or.json").write_text("{")
+            raw = fetch.fetch_all(td)
+            ds = identity.build(
+                identity.load_aliases(REPO / "llmratings" / "aliases.json"), raw)
+        self.assertIsNone(raw["or"])
+        self.assertTrue(render.objective_rows(ds, ROLES[2], "cap"))
+        self.assertIsNone(ds.models["gpt-5-6-luna"].context_length)
 
 
 if __name__ == "__main__":
