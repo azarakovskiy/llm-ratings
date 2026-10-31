@@ -82,6 +82,15 @@ guidance and price floor. The application never writes this file.
 | Generalist | Intelligence | Best value |
 | Utility | Intelligence | Lowest qualifying price |
 
+**Live-source limit (2026-10-31):** Artificial Analysis now publishes Intelligence
+Index v5.0 and has discontinued its Coding and Agentic indexes; their API fields
+are always null. **Coder** and **Reviewer** (Coding), and **Coordinator** (Agentic),
+therefore currently get no qualifying live configurations. There is no fallback
+to Intelligence or an automatic role change. Historical fixtures retain those
+indexes for offline policy checks. See the
+[official API docs](https://artificialanalysis.ai/data-api/docs#intelligence-index-versioning)
+and [dated source findings](.scratch/llm-ratings/assets/04-artificial-analysis-source-survey.md).
+
 Use the visible controls with mouse or keyboard:
 
 - **Role** selects the task purpose, not a fixed reasoning effort. The objective
@@ -148,8 +157,8 @@ second**, **Time to first token**, and **Estimated response time for 500 answer
 tokens** are distinct published measures. Missing timing is unavailable, not
 reconstructed; none selects an effort, filters models or breaks ties. Coding
 is not measured review accuracy; Agentic is not verified coordination quality.
-The complete Coding/Agentic formulas remain unresolved in the
-[dated metric findings](https://github.com/azarakovskiy/llm-ratings/blob/0c26a6174644ef292b616bf704bf2c72a4043b79/.scratch/llm-ratings/assets/32-aa-role-metric-bases.md).
+The [dated metric findings](https://github.com/azarakovskiy/llm-ratings/blob/0c26a6174644ef292b616bf704bf2c72a4043b79/.scratch/llm-ratings/assets/32-aa-role-metric-bases.md)
+retain historical Coding/Agentic formula limits, not current source availability.
 
 OpenRouter catalog context and modalities are best-effort enrichment. Missing
 catalog evidence does not mean zero context or missing model capability.

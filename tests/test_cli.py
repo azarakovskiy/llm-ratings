@@ -205,7 +205,7 @@ def aa_config(key, effort="low", score=50, cost=1, coding=None, agentic=None,
 class SelectionPolicy(unittest.TestCase):
     """Policy consumers from synthetic temporary source payloads."""
 
-    def dataset(self, configs, included=None, tb=None):
+    def dataset(self, configs, included=None, tb=None, aliases=None):
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
         keys = {identity.aa_base_slug(r["slug"], identity.parse_aa_effort(r["name"]))
@@ -220,8 +220,7 @@ class SelectionPolicy(unittest.TestCase):
         }
         for name, doc in docs.items():
             Path(td.name, name).write_text(json.dumps(doc))
-        return identity.build({key: key for key in keys},
-                              fetch.fetch_all(td.name))
+        return identity.build(aliases or {}, fetch.fetch_all(td.name))
 
     def role(self, name="Explorer", **changes):
         profile = next(r for r in ROLES if r["name"] == name)
@@ -235,6 +234,109 @@ class SelectionPolicy(unittest.TestCase):
 
     def picks(self, result):
         return [(r["key"], r["effort"]) for r in result["rows"]]
+
+    def test_exact_canonical_names_join_without_self_aliases(self):
+        tb = {"listing": [], "submissions": {
+            "fresh-tb.json": {
+                "source_filter": {"model_name": "fresh-tb",
+                                  "reasoning_effort": "max"},
+                "metrics": {"accuracy": 0.7}},
+            "unknown-tb.json": {
+                "source_filter": {"model_name": "fresh-tb-v2",
+                                  "reasoning_effort": "max"},
+                "metrics": {"accuracy": 0.9}},
+        }}
+        ds = self.dataset([
+            aa_config("fresh-alpha", score=10),
+            aa_config("fresh-beta", "medium", score=20),
+            aa_config("fresh-tb", "max", score=30),
+            aa_config("aa-only", score=999, cost=0.001),
+        ], included=["fresh-alpha", "fresh-beta", "fresh-alpha-v2"],
+            tb=tb, aliases={})
+        result = render.query(ds, self.role())
+        self.assertEqual(self.picks(result), [
+            ("fresh-tb", "max"), ("fresh-beta", "medium"), ("fresh-alpha", "low")])
+        self.assertEqual({r["key"] for r in result["unranked"]},
+                         {"dsw:fresh-alpha-v2", "tb:fresh-tb-v2"})
+        self.assertEqual({p[0] for p in result["points"]},
+                         {"fresh-alpha", "fresh-beta", "fresh-tb"})
+        self.assertFalse(any(key in ds.models for key in
+                             ("dsw:fresh-alpha", "dsw:fresh-beta", "tb:fresh-tb")))
+        self.assertEqual({r.model_key for r in ds.ratings if r.source == "tb"},
+                         {"fresh-tb", "tb:fresh-tb-v2"})
+
+    def test_explicit_alias_precedes_an_exact_canonical_name(self):
+        ds = self.dataset([
+            aa_config("fresh-shadowed", score=99),
+            aa_config("fresh-target", "max", score=30),
+            aa_config("fresh-stale", score=90),
+        ], included=["fresh-shadowed", "fresh-stale"],
+            aliases={"fresh-shadowed": "fresh-target", "fresh-stale": "absent"})
+        result = render.query(ds, self.role())
+        self.assertEqual(self.picks(result), [("fresh-target", "max")])
+        self.assertEqual([r["key"] for r in result["unranked"]], ["dsw:fresh-stale"])
+        self.assertEqual({p[0] for p in result["points"]}, {"fresh-target"})
+        self.assertEqual({r.model_key for r in ds.ratings if r.source == "deepswe"},
+                         {"fresh-target", "dsw:fresh-stale"})
+
+    def test_comma_qualified_efforts_keep_identity_and_independent_index_grades(self):
+        sonnet = aa_config("claude-sonnet-5-5", "medium", 10, 1, 30, 20)
+        sonnet["name"] = "Claude Sonnet 5.5 (Medium, Default Fallback)"
+        fable = aa_config("claude-fable-5", "max", 20, 1, 10, 30)
+        fable.update(name="Claude Fable 5 (Max, Opus 4.8 Fallback)",
+                     slug="claude-fable-5")
+        opus = aa_config("claude-opus-5", "low", 30, 1, 20, 10)
+        opus["name"] = "Claude Opus 5 (Adaptive Reasoning, Low Effort)"
+        ds = self.dataset([
+            sonnet, fable, opus,
+            aa_config("aa-only", "xhigh", 40, 1, 40, 40),
+        ], included=["claude-sonnet-5-5", "claude-fable-5", "claude-opus-5"])
+        expected = {
+            "Explorer": [("claude-opus-5", "low", 4),
+                         ("claude-fable-5", "max", 3),
+                         ("claude-sonnet-5-5", "medium", 2)],
+            "Coder": [("claude-sonnet-5-5", "medium", 4),
+                      ("claude-opus-5", "low", 3),
+                      ("claude-fable-5", "max", 2)],
+            "Coordinator": [("claude-fable-5", "max", 4),
+                            ("claude-sonnet-5-5", "medium", 3),
+                            ("claude-opus-5", "low", 2)],
+        }
+        for role, picks in expected.items():
+            with self.subTest(role=role):
+                result = render.query(ds, self.role(role))
+                self.assertEqual([(r["key"], r["effort"], r["grade"])
+                                  for r in result["rows"]], picks)
+                self.assertEqual(result["unranked"], [])
+                self.assertNotIn("aa-only", {p[0] for p in result["points"]})
+        self.assertEqual({key: ds.models[key].name for key in
+                          ("claude-sonnet-5-5", "claude-fable-5", "claude-opus-5")},
+                         {"claude-sonnet-5-5": "Claude Sonnet 5.5",
+                          "claude-fable-5": "Claude Fable 5",
+                          "claude-opus-5": "Claude Opus 5"})
+
+    def test_unmeasured_efforts_are_not_inferred_or_stripped_from_slugs(self):
+        names = {
+            "non-reasoning-high": "Non-reasoning (Non-reasoning, High Effort)",
+            "ambiguous-high": "Ambiguous (Low, High Effort)",
+            "unknown-high": "Unknown (Adaptive Reasoning, Turbo Effort)",
+            "qualifier-high": "Qualifier (High speed fallback)",
+            "unlabelled-high": "Unlabelled",
+        }
+        configs = [dict(aa_config(key, score=999, coding=999, agentic=999),
+                        slug=key, name=name) for key, name in names.items()]
+        configs.append(dict(aa_config("release-high", score=10, coding=10, agentic=10),
+                            slug="release-high", name="Release High (Low)"))
+        ds = self.dataset(configs, included=[*names, "release-high"])
+        for role in ("Explorer", "Coder", "Coordinator"):
+            result = render.query(ds, self.role(role))
+            self.assertEqual(self.picks(result), [("release-high", "low")])
+            self.assertEqual(result["rows"][0]["grade"], 5)
+            self.assertEqual({r["key"] for r in result["unranked"]}, set(names))
+            self.assertTrue(all("No measured" in r["reason"]
+                                for r in result["unranked"]))
+        self.assertTrue(all(r.effort is None for r in ds.ratings
+                            if r.source == "aa" and r.model_key in names))
 
     def test_role_selects_its_index_and_one_measured_effort(self):
         ds = self.dataset([

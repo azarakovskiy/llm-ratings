@@ -1,8 +1,82 @@
 # Artificial Analysis — source survey (ticket 04)
 
-Surveyed 2026-08-05 from primary sources: official docs, API reference, methodology page, ToS, homepage.
+Initial survey: 2026-08-05. The sections from **Source URLs** onward retain that
+dated research as history. The 2026-10-31 findings below supersede August claims
+about present source availability, index version, schema, pagination and quotas;
+they do not change the approved selection policy.
 
-## Source URLs
+## Current findings — 2026-10-31
+
+### Official public source contract
+
+- The [Data API docs](https://artificialanalysis.ai/data-api/docs#intelligence-index-versioning)
+  name **Intelligence Index v5.0** as current. They explicitly state that
+  `artificial_analysis_coding_index` and `artificial_analysis_agentic_index`
+  are **always null**: Artificial Analysis no longer publishes either index.
+  This is a discontinued-source limit, not uncertainty about a current formula.
+  Null means not measured or not applicable, never zero.
+- The [current reference](https://artificialanalysis.ai/data-api/docs/reference#getLanguageModelsFree)
+  documents `GET /api/v2/language/models/free` with `page` (1-indexed), and
+  response fields `tier`, numeric `intelligence_index_version`, `pagination`
+  (`page`, `page_size`, `total_pages`, `has_more`) and `data`. The version number
+  carries major.minor, not patch versions. The reference still lists Coding and
+  Agentic fields in the Free shape; their presence does not imply usable scores.
+  Free data includes headline indices, median performance, input/output token
+  pricing, and Intelligence evaluation cost including `cost_per_task.total_cost`.
+  Full benchmark scores and richer model data are Pro-only.
+- The same reference defines model-level performance as medians across all
+  serving providers, not a selected endpoint's timing. Provider-specific
+  [performance time series](https://artificialanalysis.ai/data-api/docs/reference#getLanguageModelPerformanceOverTime)
+  are Commercial-only. The [data conventions](https://artificialanalysis.ai/data-api/docs#data-conventions)
+  specify 500 answer tokens for end-to-end response times unless stated otherwise.
+  These timings remain explanatory, not selection criteria.
+- The [current quota docs](https://artificialanalysis.ai/data-api/docs#rate-limits)
+  specify a fixed 24-hour window starting with the first request, not a midnight
+  UTC reset. [Attribution and licensing](https://artificialanalysis.ai/data-api/docs#attribution-and-licensing)
+  still require source credit and direct redistribution-rights requests to AA.
+
+### Live capture and integration diagnosis
+
+The parent investigation's real fetch on 2026-10-31 returned **719 AA rows**
+across four pages (**200 / 200 / 200 / 119**), **70 DeepSWE rows** and **20
+Terminal-Bench submissions**. AA had **89 finite Intelligence scores**, **zero
+finite Coding scores** and **zero finite Agentic scores**. Many older AA rows
+explicitly had null Intelligence scores. These are capture counts, not claims
+about all models on the market; this note does not redistribute raw responses.
+
+The identity join rejected source strings that exactly matched existing AA
+canonical identities unless an alias was also present. Correcting **only that
+exact-match requirement** changed the default Explorer result from one model
+(Kimi K3 Low) to five: **GPT-6 Astra Low, GLM-5.3 Low, DeepSeek V4 Pro 0813
+Maximum, Kimi K3 Low, and Gemini 3.8 Flash Medium**. This is a diagnosis of that
+capture, not a hardcoded model list or a new inclusion rule. It does not measure
+the separate correction for comma-qualified effort strings, which can expose
+additional genuinely included configurations.
+
+With the existing role/index policy unchanged, live **Coder/Reviewer (Coding)**
+and **Coordinator (Agentic)** have no qualifying configurations. There is no
+fallback to Intelligence, another index, or invented scores. Historical fixtures
+retain their Coding/Agentic measurements for offline policy checks; their
+availability is not evidence of current publication.
+
+### Corrected live runtime verification
+
+A fresh `python3 -m llmratings --web` launch used the real APIs, not fixtures.
+The served Explorer / Best value table displayed the five models listed above;
+Provider picks displayed the same five across their creators. OpenAI selection
+showed GPT-6 Astra Low with Intelligence score 43 and matching task cost
+$1.4237; its inline evidence opened correctly. Switching to Coder retained
+OpenAI and showed no qualifying configuration rather than substituting scores.
+The provider-picks page stayed 390 pixels wide at a 390-pixel viewport, with
+no browser errors observed. Verification tabs and the server were closed;
+temporary raw captures were deleted.
+
+The corrected implementation passed **113 unittest cases** and `make lint`.
+The comma-qualified effort parser correction added no further eligible models
+in the captured refresh. These checks establish current integration behavior,
+not broader API coverage or availability of the discontinued indexes.
+
+## Source URLs (2026-08-05 historical survey)
 
 - Homepage / charts: https://artificialanalysis.ai/
 - Data API docs (tiered V2 API): https://artificialanalysis.ai/data-api/docs

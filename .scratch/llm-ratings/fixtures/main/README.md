@@ -199,8 +199,12 @@ without dropping the configuration or its raw row. No timing, score or cost is
 copied from another effort. The outer Intelligence suite `total_cost`, token
 list prices, and DeepSWE/Terminal-Bench run expenditures are different bases.
 There is no established matching Coding/Agentic task cost. The separate Coding
-Agent Index is not a substitute for these scores, and the complete current
-Coding/Agentic formulas remain a source gap.
+Agent Index is not a substitute for these scores. These historical fixtures
+retain Coding/Agentic measurements, but the
+[current AA docs](https://artificialanalysis.ai/data-api/docs#intelligence-index-versioning)
+state, as checked on 2026-10-31, that both indexes are discontinued and their
+API fields are always null. Live Coder/Reviewer (Coding) and Coordinator
+(Agentic) therefore have no qualifying configurations; there is no index fallback.
 
 `Dataset.provenance` exposes `mode` (`fixture` or `live`), actual UTC
 `fetched_at`, and per-source `urls`, `snapshot_date`, `synthetic`, and labelled
@@ -455,10 +459,11 @@ eligibility, objective or tie.
 
 These published scores are **role-selection proxies**. Intelligence is not
 universal task success; Coding is not measured review accuracy; Agentic is
-not proof of multi-agent coordination quality. The complete current Coding/
-Agentic composite formulas remain an unresolved source fact. Do not substitute
-the separate Coding Agent Index or imply that fixture output validates role
-performance. See the [dated metric findings](https://github.com/azarakovskiy/llm-ratings/blob/0c26a6174644ef292b616bf704bf2c72a4043b79/.scratch/llm-ratings/assets/32-aa-role-metric-bases.md)
-for primary-source evidence and its limits. Historical/synthetic fixture
-results and passing offline checks are not current market recommendations.
+not proof of multi-agent coordination quality. The historical Coding/Agentic
+composite formula limits are recorded in the
+[dated metric findings](https://github.com/azarakovskiy/llm-ratings/blob/0c26a6174644ef292b616bf704bf2c72a4043b79/.scratch/llm-ratings/assets/32-aa-role-metric-bases.md);
+they are not uncertainty about current availability. Do not substitute the
+separate Coding Agent Index or imply that fixture output validates role
+performance. Historical/synthetic fixture results and passing offline checks
+are not current market recommendations.
 

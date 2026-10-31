@@ -6,11 +6,11 @@ carry different ids), so the variant UUID is not a model key; base slugs are
 what the checked-in alias table keys on. Display name = AA name minus the
 effort parenthetical; provider = AA model_creator name.
 
-DeepSWE/TB model strings map onto AA base slugs via the alias table. A rated
-model with no AA row (or whose alias resolves to nothing in the data) keeps a
-source-only identity: key "dsw:<name>", provider "—", no matching task cost.
-It stays reachable as unranked evidence, with no fabricated selected-index
-configuration or cost-based recommendation.
+DeepSWE/TB model strings map onto existing AA base slugs, with explicit aliases
+taking precedence over exact canonical keys. A rated model with no matching AA
+row keeps a source-only identity: key "dsw:<name>", provider "—", no matching
+task cost. It stays reachable as unranked evidence, with no fabricated
+selected-index configuration or cost-based recommendation.
 
 Rating rows attach wholesale: `raw` always contains the original source row.
 For AA, `score` is Intelligence; `coding_score` and `agentic_score` stay
@@ -23,9 +23,9 @@ stays zero. No metric is copied between effort variants.
 Timing fields retain first-answer seconds (including thinking), first-token
 seconds, output tokens/s (`speed`), and the published synthetic response time
 for 500 answer tokens. They are not interchangeable or whole-agent durations.
-The Free route's exact prompt preset/provider aggregation and complete current
-Coding/Agentic formulas are not established; these are not creator-endpoint
-performance claims or area-index task costs.
+These are model-level provider aggregates, not creator-endpoint performance
+claims or area-index task costs. The current v5 API has discontinued Coding/
+Agentic scores; historical fixture scores remain distinct when supplied.
 
 Dataset.provenance carries fetch mode/time, source URLs and available historical
 snapshot/source dates. Each Rating adds its source URL, matching source-page
@@ -71,11 +71,10 @@ def best_tb(ratings, effort):
             best[r.model_key] = r
     return best
 
-# AA effort variants are separate rows; the effort lives in the name's trailing
-# parenthetical: "GPT-5.6 Luna (low)", "Claude Opus 5 (Adaptive Reasoning, Low
-# Effort)", "DeepSeek V4 Flash 0731 (Reasoning, Max Effort)". "(Non-reasoning,
-# High Effort)" is NOT an effort variant.
-_EFFORT_TAIL = re.compile(r"(?:.*?,\s*)?(low|medium|high|xhigh|max)(?:\s+effort)?$", re.I)
+# AA effort variants are separate rows; the effort is a comma-delimited part
+# of the trailing parenthetical: "(Medium, Default Fallback)" or "(Adaptive
+# Reasoning, Low Effort)". Non-reasoning and ambiguous efforts stay unmeasured.
+_EFFORT_PART = re.compile(r"(low|medium|high|xhigh|max)(?:\s+effort)?", re.I)
 
 
 @dataclass
@@ -130,13 +129,15 @@ def load_aliases(path):
 def parse_aa_effort(name):
     """Reasoning effort of an AA row from its display name, or None when the
     row is not an effort variant (non-reasoning, or no parenthetical)."""
-    if not name.endswith(")"):
+    start = name.rfind("(")
+    if start == -1 or not name.endswith(")"):
         return None
-    tail = name[name.rfind("(") + 1:-1].strip()
+    tail = name[start + 1:-1].strip()
     if "non-reasoning" in tail.lower():
         return None
-    m = _EFFORT_TAIL.fullmatch(tail)
-    return m.group(1).lower() if m else None
+    efforts = [m.group(1).lower() for part in tail.split(",")
+               if (m := _EFFORT_PART.fullmatch(part.strip()))]
+    return efforts[0] if len(efforts) == 1 else None
 
 
 def aa_base_slug(slug, effort):
@@ -156,12 +157,12 @@ def display_name(name):
 
 
 def _join(aliases, models, name, prefix):
-    """Resolve a source model string to a canonical model key. The alias table
-    maps source strings to AA base slugs; an alias with no AA row in the data
-    keeps a source-only identity `prefix:<name>` (spec §3)."""
-    alias = aliases.get(name)
-    if alias and alias in models:
-        return alias
+    """Resolve exact AA keys, with explicit aliases taking precedence.
+    An alias with no AA row keeps a source-only identity `prefix:<name>`
+    rather than falling back to the source name (spec §3)."""
+    canonical = aliases.get(name, name)
+    if canonical in models:
+        return canonical
     key = prefix + name
     models.setdefault(key, Model(key, name, "—"))
     return key
