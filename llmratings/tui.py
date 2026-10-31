@@ -11,8 +11,9 @@ lines), `Session` keeps the state machine, and the `LlmRatings` App just
 draws `Session.frame()` and routes keys into `Session.key()`.
 
 Keymap (spec §6): ←/→ or 1–N role nav (N = roles.json length), ↑/↓ row nav,
-`f` capability filter (all → cap = 5 → cap ≥ 4, banding key = AA grade), `o`
-objective override (cap → ppi → price → role default, reset on role switch —
+`f` capability filter (all → grade = 5 → grade ≥ 4 on the selected index), `o`
+objective override (Highest capability → Best value → Lowest qualifying price
+→ role default, reset on role switch —
 ticket 18 deletes the `e` effort override: efforts now come from the active
 objective), Enter detail view, Esc back, q quit; Ctrl-C quits too. Textual
 owns cursor addressing, resize and scrolling; batch mode (non-tty stdin
@@ -37,7 +38,7 @@ try:
 except ImportError:   # batch mode must keep working without textual
     _TEXTUAL = False
 
-FILTERS = [("all", None), ("cap = 5", 5), ("cap ≥ 4", 4)]
+FILTERS = [("all", None), ("grade = 5", 5), ("grade ≥ 4", 4)]
 
 TABLE_FOOTER = ("←/→ or 1–N role · ↑/↓ move · f filter · o objective · "
                 "Enter detail · Esc/q quit")
@@ -56,11 +57,12 @@ class Session:
     stay separate so the Textual shell is just draw → key → redraw.
     """
 
-    def __init__(self, ds, roles, role_name):
+    def __init__(self, ds, roles, role_name=None):
         self.ds = ds
         self.roles = roles
-        self.role_i = next(i for i, r in enumerate(roles)
-                           if r["name"] == role_name)
+        self.role_i = (0 if role_name is None else
+                       next(i for i, r in enumerate(roles)
+                            if r["name"] == role_name))
         self.cursor = 0
         self.filt = 0
         self.obj = None       # objective override; None = role default
@@ -83,17 +85,19 @@ class Session:
                     + render.detail(self.ds, self.detail_row, role,
                                     self.objective)
                     + ["", "Esc back · q quit", render.ATTRIBUTION])
-        lines, self._rows = render.table(self.ds, role, self.objective,
-                                         FILTERS[self.filt][1])
+        lines, self._rows = render.table(
+            self.ds, role, objective=self.objective,
+            min_grade=FILTERS[self.filt][1])
         sel = [i for i, ln in enumerate(lines)
-               if ln.startswith("  ") and not ln.startswith("    ")]
+               if any(ln.startswith(f"  {row['model']} ")
+                      for row in self._rows)]
         if sel:
             self.cursor = min(self.cursor, len(sel) - 1)
             at = sel[self.cursor]
             lines[at] = "\x1b[7m" + lines[at] + "\x1b[0m"
         state = "default" if self.obj is None else "override"
         status = (f"LLM RATINGS — {role['name']} · objective "
-                  f"{self.objective} ({state}) · "
+                  f"{render.OBJECTIVE_LABEL[self.objective]} ({state}) · "
                   f"filter: {FILTERS[self.filt][0]}")
         # render.table already carries the role header + column header lines.
         return [status, ""] + lines + ["", TABLE_FOOTER, render.ATTRIBUTION]
@@ -236,7 +240,7 @@ if _TEXTUAL:
             Binding("9", "press('9')", show=False, priority=True),
         ]
 
-        def __init__(self, ds, roles, role_name="Chores"):
+        def __init__(self, ds, roles, role_name=None):
             super().__init__(driver_class=_EofDriver)
             self.sess = Session(ds, roles, role_name)
 
