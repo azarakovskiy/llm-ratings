@@ -12,6 +12,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; }
+[hidden] { display: none !important; }
 a { color: var(--cobalt); text-underline-offset: 3px; }
 button, select { font: inherit; }
 button, select, summary, a { touch-action: manipulation; }
@@ -26,7 +27,7 @@ button { padding: 8px 12px; cursor: pointer; }
 button:hover { background: #eef2ff; border-color: var(--cobalt); }
 select { width: 100%; padding: 8px 32px 8px 12px; }
 :focus-visible { outline: 3px solid var(--cobalt); outline-offset: 3px; }
-h1, h2, h3, p { margin: 0; }
+h1, h2, h3, h4, p { margin: 0; }
 h1 { font-size: 30px; line-height: 1.25; letter-spacing: -.6px; margin-bottom: 26px; }
 h2 { font-size: 21px; line-height: 1.3; }
 h3 { font-size: 19px; }
@@ -72,9 +73,7 @@ main, .creator-nav, .choice-form { min-width: 0; }
 .role-purpose { margin: 14px 0 10px; max-width: 85ch; }
 .role-purpose strong { white-space: nowrap; margin-left: 6px; }
 .role-support { display: flex; align-items: baseline; gap: 10px 20px; flex-wrap: wrap; margin-bottom: 22px; }
-.role-support details { max-width: 70ch; }
-.role-support summary { color: var(--muted); font-size: 14px; }
-.role-support details p { font-size: 14px; margin-top: 10px; }
+.role-support > .secondary { max-width: 70ch; }
 .quiet button { min-height: 32px; padding: 3px 0; border: 0; border-radius: 0; color: var(--cobalt); background: transparent; text-decoration: underline; text-underline-offset: 3px; }
 .view-tabs { display: flex; border-bottom: 1px solid #bdcbd9; margin-bottom: 20px; gap: 5px; }
 .view-tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 4px 4px 0 0; background: transparent; padding: 12px 20px; font-weight: 600; color: var(--muted); }
@@ -88,7 +87,7 @@ main, .creator-nav, .choice-form { min-width: 0; }
 .source-dates { margin-top: 7px; }
 .source-dates summary { width: fit-content; }
 .source-dates ul { margin: 8px 0 4px; }
-.comparison-scroll { position: relative; width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+.comparison-scroll { position: relative; width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 7px; background: #fff; container-type: inline-size; }
 table { border-collapse: collapse; width: 100%; font-size: 15px; text-align: left; font-variant-numeric: tabular-nums; }
 caption { text-align: left; }
 thead { background: #f0f4f9; }
@@ -99,12 +98,12 @@ tbody th { font-weight: 400; }
 tr:last-child > th, tr:last-child > td { border-bottom: 0; }
 tbody + tbody { border-top: 1px solid var(--line); }
 .numeric { text-align: right; }
-.model-table { min-width: 1130px; }
+.model-table { min-width: 1530px; }
 .model-table > thead th:first-child { width: 190px; }
 .model-table td:nth-child(2) { white-space: nowrap; }
 .model-table .numeric { min-width: 107px; }
 .model-table .replacement { width: 230px; min-width: 210px; }
-.model-table:not(:has(.replacement)) { min-width: 620px; }
+.model-table:not(:has(.replacement)) { min-width: 1000px; }
 .score { font-size: 19px; }
 .section-row th { padding: 9px 13px; background: #eff3f8; font-size: 13px; font-weight: 600; }
 .frontier .section-row th { color: #115f50; background: #eaf6f1; border-left: 3px solid var(--teal); }
@@ -133,6 +132,38 @@ summary { cursor: pointer; font-weight: 600; width: fit-content; }
 .state-message p { max-width: 85ch; }
 .recoveries { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .recoveries button { color: #73500a; border-color: #bd9855; }
+.details-action { margin-top: 9px; }
+.details-action button { min-height: 36px; padding: 4px 10px; font-size: 14px; color: var(--cobalt); }
+.details-action button[aria-expanded="true"] { border-color: var(--cobalt); background: #eaf0ff; }
+.evidence-row > td { padding: 14px; background: #f5f8fc; vertical-align: top; }
+.model-evidence { min-width: 0; padding: 20px; border-left: 3px solid var(--cobalt); background: #fff; overflow-wrap: anywhere; }
+.evidence-row .model-evidence { position: sticky; left: 14px; width: calc(100cqw - 28px); }
+.model-evidence .evidence-heading { display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.model-evidence h4 { font-size: 16px; margin: 22px 0 9px; }
+.model-evidence p { max-width: 80ch; margin: 9px 0; font-size: 15px; }
+.model-evidence .secondary { font-size: 14px; }
+.model-evidence .provenance { margin: 14px 0 20px; }
+.model-evidence .provenance p { font-size: 14px; }
+.model-evidence .comparison-scroll { margin: 12px 0; }
+.model-evidence table { min-width: 950px; }
+.model-evidence th, .model-evidence td, .policy th, .policy td { overflow-wrap: normal; }
+.model-evidence td:nth-child(2) { white-space: normal; }
+.model-evidence .source-evidence-table { min-width: 1180px; }
+.model-evidence .timing-price-table { min-width: 1680px; }
+.model-evidence .alternatives-table { min-width: 750px; }
+.model-evidence .configuration-sources { margin-top: 15px; }
+.model-evidence .disagreement { border-left: 3px solid #b48220; padding-left: 12px; color: #66490f; }
+.secondary-disclosure li:has(.model-evidence:not([hidden])) { max-width: none; }
+.secondary-disclosure li > .model-evidence { margin-top: 14px; }
+.catalog-metadata { display: flex; flex-wrap: wrap; gap: 12px 36px; margin: 12px 0; }
+.catalog-metadata dt { color: var(--muted); }
+.catalog-metadata dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; }
+.policy > details { margin: 15px 0 15px 16px; padding-left: 14px; border-left: 1px solid var(--line); }
+.policy > details > summary { font-size: 15px; }
+.policy p { max-width: 80ch; font-size: 15px; }
+.policy table { min-width: 1000px; }
+.policy td:nth-child(2) { min-width: 280px; }
+.policy td details { margin-top: 8px; }
 .request-error { position: fixed; bottom: 12px; left: 12px; right: 12px; max-width: 75ch; margin: auto; padding: 16px; border: 1px solid #bd9855; background: #fff7e8; color: #73500a; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .skip-link { position: fixed; top: -80px; left: 12px; padding: 12px; background: #fff; z-index: 3; }
@@ -169,4 +200,8 @@ summary { cursor: pointer; font-weight: 600; width: fit-content; }
   .state-message { padding: 16px; overflow-wrap: anywhere; }
   .secondary-disclosure summary { overflow-wrap: anywhere; }
   .secondary-disclosure li { overflow-wrap: anywhere; }
+  .model-evidence { padding: 15px 12px; }
+  .model-evidence .evidence-heading { display: block; }
+  .model-evidence .evidence-heading .action-form { margin-top: 12px; }
+  .policy > details { margin-left: 0; padding-left: 10px; }
 }

@@ -131,11 +131,100 @@ class WebAdvice(unittest.TestCase):
         for text in ("Primary", "Runner-up", "GPT-5.6 Luna", "GPT-5.6 Sol",
                      "No qualifying runner-up", "Kimi"):
             self.assertIn(text, picks.visible)
-        self.assertNotIn("Details", picks.visible)
+        self.assertIn("Details", picks.visible)
         table = self.action("view", "table")
         self.assertIn("Intelligence score", table.visible)
         self.assertIn("GPT-5.6 Luna", table.visible)
 
+
+    @staticmethod
+    def open_evidence(doc):
+        return [attrs for _, attrs in doc.tags
+                if "model-evidence" in attrs.get("class", "").split()
+                and "hidden" not in attrs]
+
+    def test_explicit_inline_evidence_in_both_views_and_source_only_records(self):
+        _, _, body = self.request()
+        initial = Document(body)
+        self.assertFalse(self.open_evidence(initial))
+        for label in ("Time to first answer token", "including thinking",
+                      "Output tokens per second", "How picks work"):
+            self.assertIn(label, initial.visible)
+        self.action("provider", "OpenAI")
+        self.action("objective", "cap")
+        opened = self.action("details", "gpt-5-6-sol")
+        self.assertEqual(len(self.open_evidence(opened)), 1)
+        for label in ("GPT-5.6 Sol", "Maximum", "Measured configurations",
+                      "Why this configuration", "Capability per dollar",
+                      "Published timing and token list prices", "USD per million input tokens",
+                      "Time to first token", "Estimated response time for 500 answer tokens",
+                      "OpenRouter", "30-day token share", "Unavailable",
+                      "DeepSWE", "Terminal-Bench", "2026-08-05"):
+            self.assertIn(label, opened.visible)
+        control = next(attrs for tag, attrs in opened.tags
+                       if tag == "button" and attrs.get("aria-expanded") == "true")
+        self.assertTrue(any(attrs.get("id") == control["aria-controls"]
+                            for _, attrs in opened.tags))
+        source_links = [attrs["href"] for tag, attrs in opened.tags if tag == "a"]
+        self.assertTrue(any("leaderboard-live.json" in url for url in source_links))
+        self.assertTrue(any("terminal-bench-2-1" in url for url in source_links))
+        closed = self.action("close_details", "")
+        self.assertFalse(self.open_evidence(closed))
+        self.assert_choices(closed, "Explorer", "cap", "OpenAI", "", "table")
+        picks = self.action("view", "picks")
+        self.assertFalse(self.open_evidence(picks))
+        for key in ("gpt-5-6-sol", "gpt-5-5"):
+            opened = self.action("details", key)
+            self.assertEqual(len(self.open_evidence(opened)), 1)
+            self.assertIn("Why this configuration", opened.visible)
+        self.action("recover", "all_providers")
+        opened = self.action("details", "dsw:gpt-5-6-terra")
+        self.assertEqual(len(self.open_evidence(opened)), 1)
+        self.assertIn("No measured Artificial Analysis configuration", opened.visible)
+        self.assertIn("DeepSWE", opened.visible)
+        self.assertIn("Unranked", opened.visible)
+
+    def test_details_clear_on_result_changes_and_area_cost_advice_stays_unavailable(self):
+        transitions = (("objective", "cap"), ("capability", "4"),
+                       ("provider", "OpenAI"), ("view", "picks"), ("role", "Coder"))
+        for action, value in transitions:
+            self.action("details", "gpt-5-6-sol")
+            changed = self.action(action, value)
+            self.assertFalse(self.open_evidence(changed), (action, value))
+        opened = self.action("details", "gpt-5-6-sol")
+        self.assertIn("Coding", opened.visible)
+        self.assertIn("no matching Coding benchmark task cost", opened.visible)
+        self.assertIn("Intelligence benchmark task cost", opened.visible)
+        unavailable = self.action("objective", "ppi")
+        self.assertFalse(self.open_evidence(unavailable))
+        opened = self.action("details", "gpt-5-6-sol")
+        self.assertEqual(len(self.open_evidence(opened)), 1)
+        self.assertIn("Unavailable objective", opened.visible)
+        self.assert_choices(opened, "Coder", "ppi", "OpenAI", "4", "picks")
+        status, _, _ = self.request("POST", body="action=details&value=unknown-model",
+                                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 400)
+
+    def test_unranked_negative_cost_is_not_relabelled_positive_and_missing_metrics_stay_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            docs = {
+                "aa.json": {"data": [aa_config("invalid-cost", score=50, cost=-4, speed=None)]},
+                "deepswe.json": {"rows": [
+                    {"model": "invalid-cost", "reasoning_effort": "low", "pass_at_1": .5}]},
+                "tb.json": {"listing": [], "submissions": {}},
+            }
+            for name, payload in docs.items():
+                Path(td, name).write_text(json.dumps(payload))
+            ds = identity.build({"invalid-cost": "invalid-cost"}, fetch.fetch_all(td))
+        self.start_dataset(ds)
+        doc = self.action("details", "invalid-cost")
+        self.assertEqual(len(self.open_evidence(doc)), 1)
+        self.assertIn("−$4", doc.visible)
+        self.assertIn("No finite non-negative matching Intelligence benchmark task cost", doc.visible)
+        self.assertIn("— means unavailable", doc.visible)
+        self.assertIn("Time to first answer token, including thinking", doc.visible)
+        self.assertIn("Context length", doc.visible)
+        self.assertIn("30-day token share Unavailable", doc.visible)
 
     def assert_choices(self, doc, role, objective, provider, capability, view):
         for value in (role, objective, provider, capability, view):
@@ -239,6 +328,8 @@ class WebAdvice(unittest.TestCase):
             ("action=capability&value=3", {}, 400),
             ("action=view&value=private-user-input", {}, 400),
             ("action=recover&value=private-user-input", {}, 400),
+            ("action=details&value=private-user-input", {}, 400),
+            ("action=close_details&value=private-user-input", {}, 400),
         ]
         for body, extra_headers, expected in invalid:
             with self.subTest(body=body[:60], headers=extra_headers):
@@ -394,7 +485,8 @@ class WebLaunch(unittest.TestCase):
                               ("capability", "4"), ("view", "picks"),
                               ("role", "Coder"), ("objective", "ppi"),
                               ("recover", "highest_capability"),
-                              ("recover", "all_providers"), ("view", "table")):
+                              ("recover", "all_providers"), ("view", "table"),
+                              ("details", "gpt-5-6-sol"), ("close_details", "")):
             with self.subTest(action=action, value=value):
                 connection = http.client.HTTPConnection(url.split("/")[2], timeout=5)
                 try:

@@ -20,7 +20,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))  # in-process `import llmratings` for render tests
 FIXTURES = REPO / ".scratch" / "llm-ratings" / "fixtures" / "main"
 
-from llmratings import fetch, identity, render  # noqa: E402  (sys.path setup above)
+from llmratings import evidence, fetch, identity, render  # noqa: E402  (sys.path setup above)
 from llmratings.session import Session  # noqa: E402
 ROLES = render.load_roles(REPO / "llmratings" / "roles.json")
 
@@ -383,8 +383,9 @@ class SelectionPolicy(unittest.TestCase):
                 lines, display = render.table(ds, self.role(name))
                 self.assertEqual([(r["key"], r["effort"]) for r in display], expected)
                 self.assertNotIn("Benchmark task cost", "\n".join(lines))
-                self.assertNotIn("Cheaper alternatives",
-                                 "\n".join(render.detail(ds, display[0], self.role(name))))
+                opened = evidence.model_evidence(ds, result, display[0])
+                self.assertEqual(opened["alternatives"], [])
+                self.assertEqual(opened["advisory_scope"]["kind"], "unavailable")
 
     def test_intelligence_required_data_and_usable_quotient(self):
         ds = self.dataset([
@@ -562,13 +563,10 @@ class SelectionPolicy(unittest.TestCase):
         strict = render.query(ds, self.role("Utility", floor=5), min_grade=5)
         self.assertEqual(self.picks(strict), [("target", "max")])
         self.assertEqual(strict["points"], broad["points"])
-        detail = "\n".join(render.detail(ds, strict["rows"][0],
-                                         self.role("Utility", floor=5)))
-        expected = ["near-one Low — $1.00", "near-two Low — $2.00",
-                    "near-three Low — $3.00"]
-        positions = [detail.index(text) for text in expected]
-        self.assertEqual(positions, sorted(positions))
-        self.assertNotIn("near-four Low —", detail)
+        opened = evidence.model_evidence(ds, strict, strict["rows"][0])
+        self.assertEqual(opened["alternatives"], [
+            ("near-one", "low", 1, 79), ("near-two", "low", 2, 78),
+            ("near-three", "low", 3, 77)])
         self.assertEqual({r["key"] for r in strict["unranked"]},
                          {"near-one", "near-two", "near-three", "near-four"})
 
@@ -653,11 +651,12 @@ class SelectionPolicy(unittest.TestCase):
         self.assertEqual(strict["points"], local["points"])
         self.assertEqual(strict["frontier_path"], local["frontier_path"])
         self.assertNotIn("catalog-only", {p[0] for p in local["points"]})
-        detail = "\n".join(render.detail(ds, rows["target"], self.role("Planner")))
-        self.assertIn("Creator-local comparison — Acme", detail)
-        self.assertIn("peer Maximum", detail)
-        self.assertIn("near-two High", detail)
-        self.assertNotIn("outsider", detail)
+        opened = evidence.model_evidence(ds, local, rows["target"])
+        self.assertEqual(opened["advisory_scope"]["label"], "Creator-local comparison — Acme")
+        self.assertEqual(opened["dom"], (1, 1, "peer", "max", 81, 9))
+        self.assertEqual(opened["alternatives"], [
+            ("cross", "low", 1, 90), ("near-one", "low", 2, 79),
+            ("near-two", "high", 3, 78)])
         restored = render.query(ds, self.role("Planner"), provider=None)
         self.assertEqual(restored["frontier_path"], global_result["frontier_path"])
         self.assertEqual(restored["rows"], global_result["rows"])
@@ -1145,8 +1144,8 @@ class LiveAcquisition(unittest.TestCase):
                          "AA fetcher must stop on the short page")
 
     def test_live_or_context_joins_onto_models(self):
-        # Dataset-level assertion of the live OR join (the rendered context
-        # line is pinned in test_tui): ids resolve through the alias table
+        # Dataset-level assertion of the live OpenRouter join (fixture-loaded
+        # evidence cases are in test_evidence): ids resolve through the alias table
         # ("openai/gpt-5.6-luna") or a vendor-prefix strip ("anthropic/
         # claude-opus-5"); models without an OR row keep context None.
         from llmratings import fetch, identity

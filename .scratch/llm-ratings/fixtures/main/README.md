@@ -1,4 +1,4 @@
-# Fixtures — main and runtime source/selection contract (tickets 11–18, 34–37)
+# Fixtures — main and runtime source/selection contract (tickets 11–18, 34–38)
 
 Saved source payloads, curated to a small subset and supplemented with
 synthetic rows, served by the CLI's `--fixtures` mode (the spec's
@@ -11,7 +11,8 @@ and OpenRouter rows are synthetic; missing creators are not coverage claims.
 
 ## Local web launch
 
-From the repository root:
+The runtime uses only the Python standard library; there is no dependency
+installation step. From the repository root, launch directly without `.env`:
 
 ```sh
 LLM_RATINGS_AA_API_KEY=dummy python3 -m llmratings --web --fixtures .scratch/llm-ratings/fixtures/main --role Explorer
@@ -22,10 +23,23 @@ the actual port. `--web` works with redirected input/output and does not need
 a terminal. The process stays in the foreground until **Ctrl-C**, which closes
 the listener. Closing the browser tab does not stop the server.
 
+The supported default launcher sources the local `.env` and forwards `ARGS`:
+
+```sh
+make run ARGS='--fixtures .scratch/llm-ratings/fixtures/main --role Explorer'
+```
+
+For that offline command, `.env` must set `LLM_RATINGS_AA_API_KEY=dummy`.
+For a live run, set a real key and omit `--fixtures`. This launches the real
+application, not the archived visual prototype. Full setup and control guidance
+is in the [runtime README](../../../../README.md).
+
 Startup loads these saved source payloads and builds the shared dataset once.
 Role, objective, creator, capability-filter and view controls reuse that same
 loaded snapshot; they do not fetch again. Restart the process to load a new
-snapshot. Each launch starts a new session without saved preferences.
+snapshot. Each launch starts one local-only, in-memory session without saved
+preferences or configuration writes. Tabs using the same process share its
+choices; this is not a hosted or multi-user service.
 
 The comparison identifies this historical/synthetic fixture as an **offline
 snapshot**, with its source dates separate from the current fetch time. It is
@@ -36,8 +50,24 @@ OpenRouter enrichment does not stop the comparison.
 
 For a live refresh, export a real `LLM_RATINGS_AA_API_KEY` and run
 `python3 -m llmratings --web`. `--role NAME` chooses the initial role; without
-it, the first role in `llmratings/roles.json` is used. Without `--web`, existing
-noninteractive batch output and terminal-only Textual behavior are unchanged.
+it, the first role in `llmratings/roles.json` is used. Without `--web`, module
+invocation always prints batch output and exits, even in a terminal:
+
+```sh
+LLM_RATINGS_AA_API_KEY=dummy python3 -m llmratings --fixtures .scratch/llm-ratings/fixtures/main --role Explorer
+```
+
+Visible Role, Objective, Selected-index capability filter, Model creator and
+view controls drive the shared policy below. **Details** opens or closes model
+evidence inline only on request; focus alone does not expand it. **How picks
+work** explains role purposes, objectives, exact ordering, grades and source
+limits in a secondary disclosure. Source attribution and the refresh/fetch
+date remain visible when disclosures are closed. **Source dates and provenance**
+and Details distinguish the current file-read time from historical/synthetic
+snapshot and published observation dates. Missing optional timing, context,
+modalities or unverified 30-day token share is unavailable, not zero. Setup and
+required rating-source failures stop the run; best-effort OpenRouter enrichment
+does not. Unknown role names are usage errors (exit status 2).
 
 ## Provenance
 
@@ -224,8 +254,9 @@ checks do not claim a newly inspected authenticated live response.
 the historical five-role/unchanged-data-model clauses of ADR 0002; the ADR
 and historical fixture evidence are not rewritten as new measurements.
 
-`llmratings/roles.json` remains the single editable profile file, also
-selectable through `LLM_RATINGS_ROLES`. File order is presentation order:
+`llmratings/roles.json` remains the single editable profile file.
+`LLM_RATINGS_ROLES` is a test-only file override, not a second user configuration
+surface. File order is presentation order:
 
 | Role | Purpose and boundary | Artificial Analysis index | Default objective |
 |---|---|---|---|
@@ -259,10 +290,10 @@ instead an explicit **unavailable objective**, not a malformed profile.
 Intelligence supports all three objectives. Coding/Agentic support Highest
 capability only. An area-index Best value or Lowest qualifying price override
 remains selected and unavailable until changed: no fallback objective, index
-switch or invented denominator. Existing terminal navigation and batch output
-consume the shared session/query path. Provider selection and both projections
-are available to UI-independent consumers; this ticket adds no terminal
-provider controls or browser interface.
+switch or invented denominator. The web application and batch output consume
+the shared session/query path. Provider selection and both projections are
+available in the browser, with explicit model Details and How picks work
+disclosures; there is no parallel terminal UI.
 
 ## Eligibility, effort and exact objective order
 
