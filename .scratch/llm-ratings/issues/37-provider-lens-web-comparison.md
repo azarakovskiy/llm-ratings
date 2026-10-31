@@ -1,7 +1,7 @@
 # Build the Provider lens web comparison
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 36
 
 ## What to build
@@ -60,16 +60,16 @@ Relevant specification sections: [Runtime and acquisition seam](../spec.md#1-run
 
 ## Acceptance criteria
 
-- [ ] The explicit web entry serves the actual fixture-built Python advice dataset on loopback; startup fetch/build runs once, and working controls use the shared policy/state without a second scoring engine.
-- [ ] Both views are fully functional with role/objective/provider/capability controls, correct initial state and retained/reset state rules. The full creator list includes non-shortcut and empty creators.
-- [ ] Intelligence table sections/path/replacements and direct-order provider picks agree with the shared query results, including a case where a dominated model is a valid pick. Coding/Agentic compare selected scores without cost claims.
-- [ ] Intelligence Score change and Task cost change use the preceding visible row within each section, with no delta on either section's first row. Provider/capability changes recompute deltas without crossing a section boundary or referencing hidden rows.
-- [ ] Included models excluded only by the capability display filter remain reachable in a labelled secondary disclosure with their objective-selected configurations and filter reasons, distinct from source-only/unranked models lacking qualifying measurements.
-- [ ] Single-pick, no-qualifying, source-only/unranked, unavailable-value and unsupported-objective states are visible and distinct. Each recovery changes only its named constraint.
-- [ ] Scores/grades stay invariant across provider changes; rows, selected efforts, order and applicable scope agree across table/picks projections.
-- [ ] Full labels, linked attribution, truthful date and fixture notice appear beside the comparison. No key, archived preview data, variant switcher, Preview states control or dead Details action reaches the product page.
-- [ ] Direct browser review passes at desktop and 390 pixels, using mouse and keyboard with visible focus, readable comparison columns and no page-level horizontal overflow. Record actual runtime evidence; archived screenshots alone do not satisfy this check.
-- [ ] Keep affected batch/acquisition/advice behavior tests working, updating broken contracts for the new entry and policy. Update launch help/usage; final default-run documentation and Textual cleanup remain assigned to the next issue.
+- [x] The explicit web entry serves the actual fixture-built Python advice dataset on loopback; startup fetch/build runs once, and working controls use the shared policy/state without a second scoring engine.
+- [x] Both views are fully functional with role/objective/provider/capability controls, correct initial state and retained/reset state rules. The full creator list includes non-shortcut and empty creators.
+- [x] Intelligence table sections/path/replacements and direct-order provider picks agree with the shared query results, including a case where a dominated model is a valid pick. Coding/Agentic compare selected scores without cost claims.
+- [x] Intelligence Score change and Task cost change use the preceding visible row within each section, with no delta on either section's first row. Provider/capability changes recompute deltas without crossing a section boundary or referencing hidden rows.
+- [x] Included models excluded only by the capability display filter remain reachable in a labelled secondary disclosure with their objective-selected configurations and filter reasons, distinct from source-only/unranked models lacking qualifying measurements.
+- [x] Single-pick, no-qualifying, source-only/unranked, unavailable-value and unsupported-objective states are visible and distinct. Each recovery changes only its named constraint.
+- [x] Scores/grades stay invariant across provider changes; rows, selected efforts, order and applicable scope agree across table/picks projections.
+- [x] Full labels, linked attribution, truthful date and fixture notice appear beside the comparison. No key, archived preview data, variant switcher, Preview states control or dead Details action reaches the product page.
+- [x] Direct browser review passes at desktop and 390 pixels, using mouse and keyboard with visible focus, readable comparison columns and no page-level horizontal overflow. Record actual runtime evidence; archived screenshots alone do not satisfy this check.
+- [x] Keep affected batch/acquisition/advice behavior tests working, updating broken contracts for the new entry and policy. Update launch help/usage; final default-run documentation and Textual cleanup remain assigned to the next issue.
 
 ## Verification
 
@@ -90,3 +90,146 @@ Direct browser smoke, using the new fixture command above:
 - Metric limits: [immutable index/cost/timing findings](https://github.com/azarakovskiy/llm-ratings/blob/0c26a6174644ef292b616bf704bf2c72a4043b79/.scratch/llm-ratings/assets/32-aa-role-metric-bases.md). Only Intelligence has an established matching benchmark task cost.
 - References establish hierarchy and behavior, not product code or real performance/coverage. Do not copy or merge the throwaway prototype, its fictional/synthesized advice, visual-variant controls or Preview states into runtime.
 - No hosted deployment, authentication, new public API product, harness/config export, gateway routing, benchmark execution, saved preferences or added market-share ranking. OpenRouter token share is display-only; do not infer it from fixture coverage. Unverified access/payload coverage is a source limitation, not a permanent product exclusion: display a value only under the specification's verified provenance rules; otherwise show Unavailable without guessing an endpoint, credentials or schema.
+
+## Answer
+
+Resolved 2026-10-31 on `implement/t37`, based on integration prerequisite
+`ec3a698`. The real fixture-fed Provider lens now serves both working views.
+The approved screenshots were viewed as visual references only; no prototype
+branch, assets, source rows or scoring code were copied into the runtime.
+
+### Runtime and ticket 38 contract
+
+- `python3 -m llmratings --web` uses the existing once-only
+  `fetch.fetch_all` → `identity.build` → `Session` startup path. It honors
+  `--fixtures`, `--role`, ordered role defaults, the required key and named
+  source/setup failures, and bypasses the TTY/Textual gate. Batch and the
+  existing TUI remain unchanged until ticket 38. CLI help and the fixture
+  README document the exact offline launch command.
+- `llmratings.web.create_server(session, port=0)` returns a standard-library
+  `HTTPServer` bound to `127.0.0.1`; `serve(session)` prints its actual URL,
+  serves in the foreground and closes cleanly on Ctrl-C. One process owns
+  one in-memory selection session. Controls never refetch sources.
+- `llmratings.webview.page(session, result)` renders a complete escaped HTML
+  document from the already computed shared query result. It preserves
+  `sections`, section deltas, `picks`, scoped replacements/path, excluded
+  configurations, unranked reasons and empty creators. No raw source payload,
+  environment, credential or second ranking engine is sent to the browser.
+- Native `POST /` forms contain exactly `action` and `value`. Actions are
+  `role`, `objective`, `capability`, `provider`, `view` and `recover`; empty
+  values clear only the matching optional choice. Each action calls the
+  existing `Session` transition and renders its returned result. `GET /`
+  renders `Session.query()`. Static routes allow only `/web.css` and
+  `/web.js`; there is no JSON API or general filesystem serving.
+- `web.js` only submits native forms, replaces `#app`, retains focus/scroll
+  and updates the persistent `#state-summary` live region. Forms still work
+  without JavaScript. `web.css` supplies creator-left navigation, labelled
+  controls, cobalt selection/focus, teal priority, amber recovery and labelled
+  internal comparison scroll regions. Ticket 38 can extend the form dispatch
+  with the existing explicit `Session.request_details`/`close_details`
+  methods and render evidence inline at `data-model` records. No inactive
+  Details action is exposed now.
+- Host/origin checks, bounded strict form parsing, a fixed static allowlist,
+  no-store responses, a restrictive Content Security Policy and escaped
+  source-derived text protect the local surface. Requests do not log their
+  URLs or values. Source attribution, actual refresh fetch time, historical
+  snapshot dates and synthetic/unavailable provenance remain distinct.
+
+### Exercised runtime and browser evidence
+
+The exact offline command in this ticket served the main snapshot at
+`http://127.0.0.1:63837/`. A separately labelled, temporary source-shaped
+variation served at `http://127.0.0.1:65491/`. All observations below came
+from those real Python servers through `browser.open`, not archived HTML.
+
+- Desktop **1440 × 1100** and phone **390 × 844** exercised both views,
+  role/objective/creator/capability controls, fixed shortcuts, the full
+  chooser, all named recoveries and secondary disclosures. Initial state
+  was Explorer / Best value / Intelligence / All providers / all grades /
+  Model table, with five selected models and two source-only unranked
+  records. Historical 2026-08-05 evidence was shown separately from the
+  actual 2026-10-31 refresh time, with an offline/synthetic-data notice.
+- Direct Python `Session` projections agreed with the served rows and
+  picks. OpenAI / Highest capability / grade 4 and above selected Sol
+  **Maximum, 58.9, grade 5** and GPT-5.5 **Extra high, 54.8, grade 4**.
+  Both scores/grades stayed identical under All providers. Independent
+  source disclosures retained Sol's DeepSWE grade 4 / Terminal-Bench
+  grade 5 and GPT-5.5's unavailable Terminal-Bench result. The filter
+  disclosure separately retained excluded Luna Maximum, score 51.2,
+  grade 3, and its display-filter reason.
+- Coder reset only the objective override and used Coding: Sol Extra high
+  **78.3** and GPT-5.5 Extra high **74.9**. Coordinator used Agentic:
+  Sol Maximum **54** and Luna Maximum **45.6**. Provider, capability
+  filter and view stayed selected. Area tables had direct score order,
+  no cost frontier/value columns or task-cost deltas. Unsupported Coding
+  Best value and Agentic Lowest qualifying price stayed selected with
+  explicit unavailable-objective explanations; Highest capability recovery
+  changed only the objective. Use role default reset only its override.
+- The non-shortcut **Kimi** creator produced one real pick and **No
+  qualifying runner-up**. Google and the variation's AA-only **Empty
+  synthetic creator** produced named no-qualifying states without relaxing
+  constraints. All providers and Clear capability filter were separate
+  actions. Creators without qualifying models retained reasons and working
+  creator-selection buttons. Unranked source-only records stayed distinct
+  from capability exclusions and unavailable source measurements.
+- The temporary variation used explicitly named Synthetic delta A–E:
+  A **40 / $1**, B **100 / $5**, C **95 / $6**, D **85 / $5.5**,
+  E **90 / $7**, plus a non-selected A Maximum **80 / $20**, a catalog-only
+  creator and a source-only record. Both Intelligence sections had multiple
+  visible rows. Frontier B showed **+60 / +$4** after A. Dominated C had no
+  predecessor; D showed **−10 / −$0.5**, E **+5 / +$1.5**. Grade ≥ 4 hid
+  A and D: both section first rows lost their deltas, and E recomputed
+  against C to **−5 / +$1**. Selecting OpenAI also hid D and produced
+  that same C→E delta. The scoped frontier path still included filtered
+  A. Filtered Provider picks chose B Primary / dominated C Runner-up,
+  agreeing with direct shared-query order.
+- Keyboard Tab navigation, native creator type-ahead, Space/Enter buttons,
+  view switching and named recovery worked. Focus was retained
+  after server updates and visibly used a **3px cobalt outline**.
+  At 390 pixels, document width remained **390**, while the model table
+  scrolled **1130px** inside a **352px** region, the picks shelf **1050px**
+  inside **352px**, and the independent-source table **800px** inside
+  **352px**. Keyboard horizontal scrolling changed the region's scroll
+  position while page horizontal scroll stayed **0**. Comparison type
+  stayed **15px**, not reduced to fit.
+- All four verification tabs had empty console/error logs. Inspected
+  rendered documents and recorded requests contained no API-key field,
+  key header or credential sentinel. No archived preview controls or
+  dead Details control appeared. All verification tabs were closed,
+  both final servers exited **0** on Ctrl-C, and the temporary fixture
+  directory was removed.
+
+Actual captured visual evidence:
+
+- [Desktop Model table and source-only/provenance disclosures](../assets/37-provider-lens-web/desktop-model-table.png)
+- [Desktop Provider picks](../assets/37-provider-lens-web/desktop-provider-picks.png)
+- [Desktop unsupported objective](../assets/37-provider-lens-web/desktop-unavailable-objective.png)
+- [Desktop single pick](../assets/37-provider-lens-web/desktop-single-pick.png)
+- [Desktop empty creator](../assets/37-provider-lens-web/desktop-empty-creator.png)
+- [Desktop synthetic deltas/exclusions/frontier path](../assets/37-provider-lens-web/desktop-synthetic-deltas.png)
+- [390px Model table and disclosures](../assets/37-provider-lens-web/phone-model-table.png)
+- [390px Provider picks](../assets/37-provider-lens-web/phone-provider-picks.png)
+- [390px keyboard focus and internal scroll](../assets/37-provider-lens-web/phone-keyboard-focus.png)
+- [390px unsupported objective](../assets/37-provider-lens-web/phone-unavailable-objective.png)
+- [390px single pick](../assets/37-provider-lens-web/phone-single-pick.png)
+- [390px synthetic deltas and distinct exclusion/unranked disclosures](../assets/37-provider-lens-web/phone-synthetic-deltas.png)
+
+### Repository verification
+
+- `make test`: **107 tests passed** on the final run. An earlier run
+  exposed two new test-expectation mistakes: the saved creator is Kimi,
+  not Moonshot, and a chunked request without Content-Length correctly
+  returns 411 before the media-type check. Those assertions were corrected;
+  the product behavior was not weakened.
+- `make lint`: **exit 0**, run after the final test pass.
+- Public HTTP/source/CLI regressions cover real fixture serving,
+  retained/reset state, area-objective unavailability, scoped deltas,
+  capability exclusions versus unranked records, dominated runner-up
+  selection, source-content escaping, omitted raw/credential sentinels,
+  hostile/invalid requests, named startup failures, best-effort enrichment
+  and once-only acquisition across control changes.
+- `git merge --no-edit integration/role-advice-web`: **Already up to date**.
+
+Inline model evidence, complete How picks work disclosures, default `make run`
+web cutover and Textual removal remain assigned to ticket 38. The glossary and
+historical ADRs are intentionally unchanged by this presentation slice.

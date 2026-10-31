@@ -1,4 +1,4 @@
-# Fixtures — main and runtime source/selection contract (tickets 11–18, 34–36)
+# Fixtures — main and runtime source/selection contract (tickets 11–18, 34–37)
 
 Saved source payloads, curated to a small subset and supplemented with
 synthetic rows, served by the CLI's `--fixtures` mode (the spec's
@@ -8,6 +8,36 @@ These are historical test payloads, not current market measurements. The
 recorded snapshot date and Intelligence Index version describe the saved
 evidence only. The model set includes fictional names, and the Terminal-Bench
 and OpenRouter rows are synthetic; missing creators are not coverage claims.
+
+## Local web launch
+
+From the repository root:
+
+```sh
+LLM_RATINGS_AA_API_KEY=dummy python3 -m llmratings --web --fixtures .scratch/llm-ratings/fixtures/main --role Explorer
+```
+
+Open the printed `http://127.0.0.1:PORT/` URL. The operating system chooses
+the actual port. `--web` works with redirected input/output and does not need
+a terminal. The process stays in the foreground until **Ctrl-C**, which closes
+the listener. Closing the browser tab does not stop the server.
+
+Startup loads these saved source payloads and builds the shared dataset once.
+Role, objective, creator, capability-filter and view controls reuse that same
+loaded snapshot; they do not fetch again. Restart the process to load a new
+snapshot. Each launch starts a new session without saved preferences.
+
+The comparison identifies this historical/synthetic fixture as an **offline
+snapshot**, with its source dates separate from the current fetch time. It is
+not live market advice. The dummy key is still required for offline runs;
+credentials and raw source payloads stay on the server. Setup or required
+rating-source errors stop startup before any URL/advice is served. Missing
+OpenRouter enrichment does not stop the comparison.
+
+For a live refresh, export a real `LLM_RATINGS_AA_API_KEY` and run
+`python3 -m llmratings --web`. `--role NAME` chooses the initial role; without
+it, the first role in `llmratings/roles.json` is used. Without `--web`, existing
+noninteractive batch output and terminal-only Textual behavior are unchanged.
 
 ## Provenance
 
