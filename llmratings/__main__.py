@@ -5,8 +5,8 @@ selecting every model's best reasoning effort. Ticket 15: the default run
 fetches all three rating sources live, plus best-effort OpenRouter
 enrichment (ticket 18); --fixtures opts into the offline test seam.
 Ticket 17: the interactive TUI is a thin Textual shell (docs/adr/0001)
-gated on a real TTY — no --interactive flag, and a missing textual
-dependency errors out before the fetch."""
+gated on a real TTY. Explicit --web bypasses that gate and serves one loaded
+shared session on loopback until Ctrl-C."""
 
 import argparse
 import os
@@ -32,12 +32,18 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="llm-ratings",
         description="Model-advice tables from DeepSWE, Terminal-Bench v2.1 and "
-                    "Artificial Analysis (PoC).")
+                    "Artificial Analysis (PoC).",
+        epilog="Offline web snapshot: LLM_RATINGS_AA_API_KEY=dummy "
+               "python3 -m llmratings --web --fixtures "
+               ".scratch/llm-ratings/fixtures/main --role Explorer")
     ap.add_argument("--role", choices=[r["name"] for r in roles],
                     default=roles[0]["name"],
                     help="role tab (default: %(default)s); the role's "
                          "objective selects each model's best reasoning "
                          "effort")
+    ap.add_argument("--web", action="store_true",
+                    help="serve the local web interface without a TTY; prints "
+                         "the loopback URL and runs until Ctrl-C")
     ap.add_argument("--fixtures", metavar="DIR", default=None,
                     help="serve saved source payloads from DIR instead of "
                          "the network (the offline test seam; the default is "
@@ -53,7 +59,7 @@ def main(argv=None):
     # (redirected stdout must stay batch, not ANSI frames). A missing
     # textual dependency is reported before the fetch — no network
     # round-trip for a setup error.
-    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    interactive = not args.web and sys.stdin.isatty() and sys.stdout.isatty()
     if interactive and not tui.available():
         print("error: textual is not installed — run `make deps`",
               file=sys.stderr)
@@ -71,6 +77,9 @@ def main(argv=None):
         return tui.run(ds, roles, args.role)
 
     session = Session(ds, roles, args.role)
+    if args.web:
+        from .web import serve
+        return serve(session)
     print(render.ATTRIBUTION)
     print()
     print("\n".join(render.render(ds, session.role, result=session.query())))
