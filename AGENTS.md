@@ -2,12 +2,12 @@
 
 ### Issue tracker
 
-Issues live as markdown files under `.scratch/<feature>/` in this repo. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues for `azarakovskiy/llm-ratings`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Five canonical roles mapped to default label strings. See `docs/agents/triage-labels.md`.
+Five canonical roles use the default label strings. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
